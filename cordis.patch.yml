@@ -1,0 +1,6 @@
+# Bundle layer applied when a profile lists `dsh-vibe-learning`.
+# The row references the package by its bare name so Node resolves the
+# installed (built) code, not a source path.
+- insert:
+    - id: dsh-vibe-learning
+      name: dsh-vibe-learning
