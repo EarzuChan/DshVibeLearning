@@ -1,0 +1,25 @@
+# TODO
+
+最高指示：本文档由主人全权管理，模型不可染指编辑
+
+- 会话的active纲目保存在...？不应该工作区，而应保存在会话（但纲目进展确保存在工作区）！会话latest的纲目激活事件，决定该会话的激活纲目是哪个
+
+- 学习面板难绷得钥匙
+- 悬浮按钮挂错地方（另外评估是floating or side panel更好）
+- 数据仍神秘加载
+
+- 纲的数据结构/拓扑
+- 落盘纲：parentId 需要用空字符串而不是 null。bug？
+- 落盘纲：要不要有agent对纲、课的额外批注？（掌握情况，明文目标...）；课可绑定工件了？而且为什么状态机不是在纲（total:lesson-x:in-progress）而是每可课一个？？？
+
+- 没看到调用update_review？
+
+- 老注入learning上下文？（一工具调用就注入）是怎么回事
+
+- 一次in-band present，如果已提交，该preview不但收起，还得切换状态为已提交，不可再查看。再查看则是想要再一run了
+- 工件为什么会出现“伪提交”然后又“完成”。工件没有alert提交反馈（设个timer，好让独立窗口展示，而内置在timer前掐了。或者是submit的提交返回值来指定alert）
+- 超时只是 in-band early return？还是服务器也停掉（但好像服务器是不停的，它是“常驻”的for any的，只需要你有run id）
+- fdbk可不再复述题干
+- get_lesson_result tool，最好要可指定run，如单run则default
+
+- 复习流程待打磨：应先update plan再创建工件，不然工件会变成野种...？

@@ -38,12 +38,18 @@ importers:
       '@deepseek-ai/dsh-client-ui-theme':
         specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/ui-theme
         version: link:../DsHarness/packages/client/ui-theme
+      '@deepseek-ai/dsh-client-ui-tool':
+        specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/ui-tool
+        version: link:../DsHarness/packages/client/ui-tool
       '@deepseek-ai/dsh-client-web-react':
         specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/web-react
         version: link:../DsHarness/packages/client/web-react
       '@deepseek-ai/dsh-commands':
         specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/interaction/commands
         version: link:../DsHarness/packages/interaction/commands
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/host/webserver
+        version: link:../DsHarness/packages/host/webserver
       '@deepseek-ai/dsh-llm':
         specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/llm/llm
         version: link:../DsHarness/packages/llm/llm
@@ -53,6 +59,9 @@ importers:
       '@deepseek-ai/dsh-session':
         specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/session
         version: link:../DsHarness/packages/core/session
+      '@deepseek-ai/dsh-session-projection':
+        specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/session/session-projection
+        version: link:../DsHarness/packages/session/session-projection
       '@deepseek-ai/dsh-skill':
         specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/packages/skill/skill
         version: link:../DsHarness/packages/skill/skill
@@ -83,6 +92,9 @@ importers:
       ts-fsrs:
         specifier: ^5.4.0
         version: 5.4.1
+      zod:
+        specifier: link:/Users/earzuchan/Documents/Sources/DsHarness/node_modules/.pnpm/zod@4.4.3/node_modules/zod
+        version: link:../DsHarness/node_modules/.pnpm/zod@4.4.3/node_modules/zod
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

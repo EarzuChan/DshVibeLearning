@@ -24,19 +24,6 @@
     "@deepseek-ai/cordis": "link:/Users/earzuchan/Documents/Sources/DsHarness/vendor/cordis",
     "@deepseek-ai/dsh-agent": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/agent",
     "@deepseek-ai/dsh-brand": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/util/brand",
-    "@deepseek-ai/dsh-commands": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/interaction/commands",
-    "@deepseek-ai/dsh-llm": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/llm/llm",
-    "@deepseek-ai/schemastery": "link:/Users/earzuchan/Documents/Sources/DsHarness/vendor/schemastery",
-    "@deepseek-ai/dsh-scope": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/scope",
-    "@deepseek-ai/dsh-session": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/session",
-    "@deepseek-ai/dsh-skill": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/skill/skill",
-    "@deepseek-ai/dsh-system-prompt": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/system-prompt",
-    "@deepseek-ai/dsh-tools": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/tools",
-    "@deepseek-ai/dsh-user-questions": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/interaction/user-questions",
-    "@deepseek-ai/dsh-workspace": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/workspace/workspace",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "ts-fsrs": "^5.4.0",
     "@deepseek-ai/dsh-client-connection": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/connection",
     "@deepseek-ai/dsh-client-locale": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/locale",
     "@deepseek-ai/dsh-client-runtime": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/runtime",
@@ -44,8 +31,25 @@
     "@deepseek-ai/dsh-client-ui-primitives": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/ui-primitives",
     "@deepseek-ai/dsh-client-ui-slots": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/ui-slots",
     "@deepseek-ai/dsh-client-ui-theme": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/ui-theme",
+    "@deepseek-ai/dsh-client-ui-tool": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/ui-tool",
     "@deepseek-ai/dsh-client-web-react": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/client/web-react",
-    "clsx": "^2.1.1"
+    "@deepseek-ai/dsh-commands": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/interaction/commands",
+    "@deepseek-ai/dsh-llm": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/llm/llm",
+    "@deepseek-ai/dsh-host-webserver": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/host/webserver",
+    "@deepseek-ai/dsh-scope": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/scope",
+    "@deepseek-ai/dsh-session": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/session",
+    "@deepseek-ai/dsh-session-projection": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/session/session-projection",
+    "@deepseek-ai/dsh-skill": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/skill/skill",
+    "@deepseek-ai/dsh-system-prompt": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/system-prompt",
+    "@deepseek-ai/dsh-tools": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/core/tools",
+    "@deepseek-ai/dsh-user-questions": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/interaction/user-questions",
+    "@deepseek-ai/dsh-workspace": "link:/Users/earzuchan/Documents/Sources/DsHarness/packages/workspace/workspace",
+    "@deepseek-ai/schemastery": "link:/Users/earzuchan/Documents/Sources/DsHarness/vendor/schemastery",
+    "clsx": "^2.1.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "ts-fsrs": "^5.4.0",
+    "zod": "link:/Users/earzuchan/Documents/Sources/DsHarness/node_modules/.pnpm/zod@4.4.3/node_modules/zod"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -63,7 +67,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-tool"
       ]
     }
   },

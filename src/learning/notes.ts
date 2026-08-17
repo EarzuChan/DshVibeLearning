@@ -1,7 +1,16 @@
 /**
- * Global note store: notes live in the plugin data dir (never a workspace,
- * never a session log). User surface sees everything; the model surface is
- * filtered by the caller.
+ * # 设计说明：笔记的两个面：
+ *
+ * ## 笔记用户面
+ *
+ * **全局笔记**（而不是一篇笔记只属于某个工作区、纲目、课程），按**册**存储。笔记可以有tag[]，tag可以是工作区、可以是大纲、可以是课程，**都可以多个**（同时有多个不同工作区、大纲、课程的tag）；笔记有查看等级：private（用户rw）、readable（用户rw、模型r）、readwrite（用户、模型都rw）
+ *
+ * ## 笔记模型（agent）面
+ *
+ * **不按册**向模型列出笔记。模型通过工具，传入tag来筛选笔记，且private笔记不进结果
+ *
+ * ---
+ *
  * @module dvl/learning/notes
  */
 
@@ -21,13 +30,15 @@ function isEnoent(error: unknown): boolean {
  */
 export class NotesStore {
   private db: NotesDb = { folders: [], notes: [] }
-  private tail: Promise<void> = Promise.resolve()
+  private tail = Promise.resolve()
 
   constructor(private readonly dataDir: string) {}
 
   private get file(): string {
     return join(this.dataDir, 'notes.json')
   }
+
+  // TODO？：笔记异步落盘，写入或先于http返回
 
   async load(): Promise<void> {
     try {
@@ -73,8 +84,10 @@ export class NotesStore {
   renameFolder(folderId: string, name: string): void {
     const trimmed = name.trim()
     if (trimmed.length === 0) throw new Error('folder name must be non-blank')
+
     const folder = this.db.folders.find(item => item.id === folderId)
     if (folder === undefined) throw new Error(`unknown folder '${folderId}'`)
+
     this.db = {
       folders: this.db.folders.map(item => item.id === folderId ? { ...item, name: trimmed } : item),
       notes: this.db.notes,
@@ -93,9 +106,8 @@ export class NotesStore {
   // ── notes ────────────────────────────────────────────────────────────────
 
   addNote(input: { folderId: string; title: string; markdown: string; tags: string[]; access: NoteAccess }): Note {
-    if (this.db.folders.every(item => item.id !== input.folderId)) {
-      throw new Error(`unknown folder '${input.folderId}'`)
-    }
+    if (this.db.folders.every(item => item.id !== input.folderId)) throw new Error(`unknown folder '${input.folderId}'`)
+
     const now = new Date().toISOString()
     const note: Note = {
       id: randomUUID(),
@@ -109,15 +121,15 @@ export class NotesStore {
     }
     this.db = { folders: this.db.folders, notes: [...this.db.notes, note] }
     void this.save()
+
     return note
   }
 
   updateNote(noteId: string, patch: { title?: string; markdown?: string; tags?: string[]; access?: NoteAccess; folderId?: string }): Note {
     const note = this.db.notes.find(item => item.id === noteId)
     if (note === undefined) throw new Error(`unknown note '${noteId}'`)
-    if (patch.folderId !== undefined && this.db.folders.every(item => item.id !== patch.folderId)) {
-      throw new Error(`unknown folder '${patch.folderId}'`)
-    }
+    if (patch.folderId !== undefined && this.db.folders.every(item => item.id !== patch.folderId)) throw new Error(`unknown folder '${patch.folderId}'`)
+
     const updated: Note = {
       ...note,
       ...patch.title !== undefined ? { title: patch.title.trim() || note.title } : {},
@@ -129,6 +141,7 @@ export class NotesStore {
     }
     this.db = { folders: this.db.folders, notes: this.db.notes.map(item => item.id === noteId ? updated : item) }
     void this.save()
+
     return updated
   }
 
@@ -142,24 +155,23 @@ export class NotesStore {
   }
 
   /**
-   * The model surface: readable notes of the current workspace whose tags
-   * include every requested tag (AND semantics).
+   * 笔记的模型面：按tag来筛选
+   * 且：会去掉 Private 笔记
    * @param workspaceTag - `workspace:<id>` implicit scope.
    * @param tags - requested `outline:<id>` / `lesson:<id>` tags.
    * @returns matching note ids.
    */
-  filterForModel(workspaceTag: string, tags: readonly string[]): string[] {
+  filterForModel(tags: readonly string[]): string[] {
     return this.db.notes
       .filter(note => note.access !== 'private')
-      .filter(note => note.tags.includes(workspaceTag))
       .filter(note => tags.every(tag => note.tags.includes(tag)))
       .map(note => note.id)
   }
 
-  modelReadable(noteId: string, workspaceTag: string): Note | undefined {
+  modelReadable(noteId: string): Note | undefined {
     const note = this.getNote(noteId)
     if (note === undefined || note.access === 'private') return undefined
-    if (!note.tags.includes(workspaceTag)) return undefined
+
     return note
   }
 }

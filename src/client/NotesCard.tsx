@@ -35,8 +35,9 @@ interface EditorDraft {
  * @param props - runtime + store + inject + locale shares.
  * @returns the card tree.
  */
-export function NotesCard({ useStore, card, t }: NotesCardProps) {
-  const notes = useStore(s => s.learningState?.notes ?? null)
+export function NotesCard({ useNotes, card, t }: NotesCardProps) {
+  const notesDomain = useNotes(s => s.notes)
+  const notes = notesDomain.notes
   const [expanded, setExpanded] = useState(false)
   const [editor, setEditor] = useState<EditorDraft | null>(null)
   const [busy, setBusy] = useState(false)
@@ -126,9 +127,11 @@ export function NotesCard({ useStore, card, t }: NotesCardProps) {
       </button>
       {expanded && (
         <div className={css.body}>
-          {notes === null
-            ? <div className={css.empty}>{t('state.loading')}</div>
-            : (
+          {notesDomain.phase === 'error'
+            ? <div className={css.empty}>{t('state.error')}</div>
+            : notes === null
+              ? <div className={css.empty}>{t('state.loading')}</div>
+              : (
               <>
                 <div className={css.toolbar}>
                   <Button size="sm" variant="outline" onClick={addFolder}>{t('card.notes.addFolder')}</Button>

@@ -35,9 +35,24 @@ export type VibeLearningKey =
   | 'artifact.inband.current'
   | 'artifact.inband.new'
   | 'artifact.inband.dialog.title'
-  | 'artifact.hasResult'
-  | 'artifact.hasFeedback'
+  | 'artifact.runs'
+  | 'artifact.run.result'
+  | 'artifact.run.feedback'
+  | 'artifact.run.empty'
   | 'artifact.previewClose'
+  | 'present.title'
+  | 'present.running'
+  | 'present.outcome.submitted'
+  | 'present.outcome.timeout'
+  | 'present.outcome.interrupted'
+  | 'present.outcome.error'
+  | 'present.openExternal'
+  | 'present.refresh'
+  | 'present.collapse'
+  | 'present.expand'
+  | 'present.url'
+  | 'present.preparing'
+  | 'present.unavailable'
   | 'card.outline.title'
   | 'card.outline.empty'
   | 'card.notes.title'
@@ -65,6 +80,9 @@ export type VibeLearningKey =
   | 'notes.error'
   | 'state.unavailable'
   | 'state.loading'
+  | 'state.idle'
+  | 'state.error'
+  | 'card.outline.notLearning'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -100,9 +118,24 @@ export const zh: Record<VibeLearningKey, string> = {
   'artifact.inband.current': '当前会话',
   'artifact.inband.new': '新开会话',
   'artifact.inband.dialog.title': 'in-band 呈现',
-  'artifact.hasResult': '有结果',
-  'artifact.hasFeedback': '有反馈',
+  'artifact.runs': '{n} 次作答',
+  'artifact.run.result': '有结果',
+  'artifact.run.feedback': '已批改',
+  'artifact.run.empty': '无作答记录',
   'artifact.previewClose': '关闭预览',
+  'present.title': '课程工件',
+  'present.running': '运行中',
+  'present.outcome.submitted': '已提交',
+  'present.outcome.timeout': '超时',
+  'present.outcome.interrupted': '中断',
+  'present.outcome.error': '失败',
+  'present.openExternal': '外部打开',
+  'present.refresh': '刷新',
+  'present.collapse': '收起',
+  'present.expand': '展开',
+  'present.url': 'URL',
+  'present.preparing': '准备中…',
+  'present.unavailable': '无法加载呈现',
   'card.outline.title': '当前纲目',
   'card.outline.empty': '当前无激活纲目',
   'card.notes.title': '笔记',
@@ -130,6 +163,9 @@ export const zh: Record<VibeLearningKey, string> = {
   'notes.error': '操作失败',
   'state.unavailable': '学习状态不可用',
   'state.loading': '加载中…',
+  'state.idle': '待命中',
+  'state.error': '加载失败',
+  'card.outline.notLearning': '本会话未进入学习模式',
 }
 
 /** English dictionary. */
@@ -159,9 +195,24 @@ export const en: Record<VibeLearningKey, string> = {
   'artifact.inband.current': 'Current session',
   'artifact.inband.new': 'New session',
   'artifact.inband.dialog.title': 'In-band present',
-  'artifact.hasResult': 'Result',
-  'artifact.hasFeedback': 'Feedback',
+  'artifact.runs': '{n} attempts',
+  'artifact.run.result': 'Result',
+  'artifact.run.feedback': 'Feedback',
+  'artifact.run.empty': 'No attempts',
   'artifact.previewClose': 'Close preview',
+  'present.title': 'Artifact',
+  'present.running': 'Running',
+  'present.outcome.submitted': 'Submitted',
+  'present.outcome.timeout': 'Timed out',
+  'present.outcome.interrupted': 'Interrupted',
+  'present.outcome.error': 'Failed',
+  'present.openExternal': 'Open',
+  'present.refresh': 'Refresh',
+  'present.collapse': 'Collapse',
+  'present.expand': 'Expand',
+  'present.url': 'URL',
+  'present.preparing': 'Preparing…',
+  'present.unavailable': 'Presentation unavailable',
   'card.outline.title': 'Current outline',
   'card.outline.empty': 'No active outline',
   'card.notes.title': 'Notes',
@@ -189,4 +240,7 @@ export const en: Record<VibeLearningKey, string> = {
   'notes.error': 'Operation failed',
   'state.unavailable': 'Learning state unavailable',
   'state.loading': 'Loading…',
+  'state.idle': 'Idle',
+  'state.error': 'Load failed',
+  'card.outline.notLearning': 'Not in learning mode',
 }

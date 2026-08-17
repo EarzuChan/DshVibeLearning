@@ -1,10 +1,8 @@
 /**
  * The learning view: one `conversation.view` list entry rendering three
- * sub-tabs (outlines / reviews / quizzes) over the fetched learning state,
- * with a manual refresh and a 10-second poll (cleared on unmount). All data
- * arrives through the store seat (written by the inject callbacks' fetch);
- * the component holds only component-local UI state (draft dialogs, busy
- * flags) and reads shared viewing state through the store.
+ * sub-tabs (outlines / reviews / quizzes) over the learning domain state,
+ * with a manual refresh button. 首次加载由生命周期控制器负责；本组件只消费
+ * store，不再轮询
  * @module dvl/client/LearningView
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -15,9 +13,6 @@ import type {
   ArtifactCategory, ArtifactDto, CardDto, LessonState, LearningStateDto, OutlineDto, OutlineNodeDto,
 } from './types.ts'
 import css from './LearningView.module.css'
-
-/** Polling cadence for the learning state (ms). */
-const POLL_MS = 10_000
 
 /** One lesson-state badge label key. */
 const STATE_KEY: Record<LessonState, 'lesson.state.notStarted' | 'lesson.state.learning' | 'lesson.state.qa' | 'lesson.state.done'> = {
@@ -30,12 +25,13 @@ const STATE_KEY: Record<LessonState, 'lesson.state.notStarted' | 'lesson.state.l
 /** The three sub-tab ids (store currency). */
 type Tab = 'outlines' | 'reviews' | 'quizzes'
 
-/** Flatten one outline's node tree into indented rows (group + lesson). */
+/** Flatten one outline's node tree into indented rows（空串 parentId 视为根） */
 function flattenNodes(nodes: readonly OutlineNodeDto[]): { node: OutlineNodeDto; depth: number }[] {
   const byParent = new Map<string | null, OutlineNodeDto[]>()
   for (const node of nodes) {
-    const list = byParent.get(node.parentId)
-    if (list === undefined) byParent.set(node.parentId, [node])
+    const key = node.parentId === '' ? null : node.parentId
+    const list = byParent.get(key)
+    if (list === undefined) byParent.set(key, [node])
     else list.push(node)
   }
   const rows: { node: OutlineNodeDto; depth: number }[] = []
@@ -155,27 +151,39 @@ function CardRow({ card, t }: { card: CardDto } & Pick<LearningViewProps, 't'>) 
   )
 }
 
-/** One artifact/lesson row with open / preview / in-band controls. */
+/** One artifact/lesson row with open / preview / in-band controls + run history. */
 function ArtifactRow({ artifact, category, face }: { artifact: ArtifactDto; category: ArtifactCategory; face: ViewFace }) {
   const { t, openArtifact, onPreview, onInband } = face
   return (
-    <div className={css.artifactRow}>
-      <div className={css.artifactHead}>
-        <span className={css.artifactTitle}>{artifact.meta.title}</span>
-        {artifact.hasResult && <span className={css.metaBadge}>{t('artifact.hasResult')}</span>}
-        {artifact.hasFeedback && <span className={css.metaBadge}>{t('artifact.hasFeedback')}</span>}
+    <div className={css.artifactBlock}>
+      <div className={css.artifactRow}>
+        <div className={css.artifactHead}>
+          <span className={css.artifactTitle}>{artifact.meta.title}</span>
+          <span className={css.metaBadge}>{t('artifact.runs', { n: artifact.runs.length })}</span>
+        </div>
+        <div className={css.artifactActions}>
+          <Button size="sm" variant="outline" onClick={() => { openArtifact(category, artifact.hash) }}>
+            {t('artifact.open')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => { onPreview(category, artifact.hash) }}>
+            {t('artifact.preview')}
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => { onInband(category, artifact.hash) }}>
+            {t('artifact.inband')}
+          </Button>
+        </div>
       </div>
-      <div className={css.artifactActions}>
-        <Button size="sm" variant="outline" onClick={() => { openArtifact(category, artifact.hash) }}>
-          {t('artifact.open')}
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => { onPreview(category, artifact.hash) }}>
-          {t('artifact.preview')}
-        </Button>
-        <Button size="sm" variant="primary" onClick={() => { onInband(category, artifact.hash) }}>
-          {t('artifact.inband')}
-        </Button>
-      </div>
+      {artifact.runs.length > 0 && (
+        <ul className={css.runList}>
+          {artifact.runs.map(run => (
+            <li key={run.runId} className={css.runRow}>
+              <span className={css.runId}>{run.runId}</span>
+              {run.hasResult && <span className={css.metaBadge}>{t('artifact.run.result')}</span>}
+              {run.hasFeedback && <span className={css.metaBadge}>{t('artifact.run.feedback')}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -186,29 +194,30 @@ function ArtifactRow({ artifact, category, face }: { artifact: ArtifactDto; cate
  * @returns the learning view tree.
  */
 export function LearningView(props: LearningViewProps) {
-  const { api, useStore, actions, t, sessionId } = props
-  const state = useStore(s => s.learningState)
+  const { api, useLearning, useStore, actions, t, sessionId } = props
+  const learning = useLearning(s => s.learning)
+  const state = learning.state
   const tab = useStore(s => s.tab)
   const preview = useStore(s => s.preview)
+  const presentRuns = useStore(s => s.presentRuns)
+  const activePresentKeys = useMemo(
+    () => new Set(Object.values(presentRuns).map(run => `${run.category}|${run.hash}`)),
+    [presentRuns],
+  )
   const [refreshing, setRefreshing] = useState(false)
   const [inbandTarget, setInbandTarget] = useState<{ category: ArtifactCategory; hash: string } | null>(null)
 
+  // 手动刷新按钮：生命周期控制器负责首次加载，这里只在用户点击时重拉
   const refresh = useCallback(async () => {
     setRefreshing(true)
     try { await api.refresh() } finally { setRefreshing(false) }
   }, [api])
 
-  // Immediate fetch, then a 10-second poll; cleared on unmount. Failures are
-  // silent (a later tick or the manual refresh retries). The refresh identity
-  // is stable per entry.
-  useEffect(() => {
-    void api.refresh().catch(() => {})
-    const timer = window.setInterval(() => { void api.refresh().catch(() => {}) }, POLL_MS)
-    return () => { window.clearInterval(timer) }
-  }, [api])
-
   const openArtifact = (category: ArtifactCategory, hash: string): void => { api.openArtifact(category, hash) }
   const onPreview = (category: ArtifactCategory, hash: string): void => {
+    // An actively-presented run owns this artifact's surface; suppress the
+    // conflicting manual read-only preview.
+    if (activePresentKeys.has(`${category}|${hash}`)) return
     actions.setPreview(
       preview !== null && preview.hash === hash && preview.category === category ? null : { category, hash },
     )
@@ -250,13 +259,15 @@ export function LearningView(props: LearningViewProps) {
       </header>
 
       <div className={css.body}>
-        {state === null
-          ? <div className={css.status}>{t('state.loading')}</div>
-          : tab === 'outlines'
-            ? <OutlinesTab state={state} t={t} />
-            : tab === 'reviews'
-              ? <ArtifactsTab kind="reviews" state={state} face={face} />
-              : <ArtifactsTab kind="quizzes" state={state} face={face} />}
+        {learning.phase === 'error'
+          ? <div className={css.status}>{t('state.error')}</div>
+          : state === null
+            ? <div className={css.status}>{t('state.loading')}</div>
+            : tab === 'outlines'
+              ? <OutlinesTab state={state} t={t} />
+              : tab === 'reviews'
+                ? <ArtifactsTab kind="reviews" state={state} face={face} />
+                : <ArtifactsTab kind="quizzes" state={state} face={face} />}
       </div>
 
       {preview !== null && (
@@ -267,7 +278,13 @@ export function LearningView(props: LearningViewProps) {
               {t('artifact.previewClose')}
             </Button>
           </div>
-          <iframe className={css.previewFrame} src={api.artifactUrl(preview.category, preview.hash)} title={t('artifact.preview')} />
+          <iframe
+            className={css.previewFrame}
+            src={api.artifactUrl(preview.category, preview.hash)}
+            title={t('artifact.preview')}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+            allow="clipboard-write"
+          />
         </div>
       )}
 

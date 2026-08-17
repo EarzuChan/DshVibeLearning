@@ -1,24 +1,16 @@
 /**
- * DVL browser-half HTTP client over the local artifact server. Pure fetch
- * wrappers + URL builders — no ctx, no React; the apply closure supplies the
- * origin and re-fetch callback. This module is internal (never re-exported).
+ * DVL browser-half HTTP client：同源相对路径 fetch（挂在 DSH webServer 的 /learning 前缀下）
+ * 纯 fetch 包装 + URL 构造——无 ctx、无 React、无端口/origin 概念
  * @module dvl/client/api
  */
 
 import type { NotesActions } from './contract.ts'
-import type { ArtifactCategory, InbandPresentResult, LearningStateDto } from './types.ts'
+import { LEARNING_ROUTE_PREFIX } from '../shared/routes.ts'
+import type { ArtifactCategory, InbandPresentResult, LearningStateDto, NotesDto, PresentArtifactDescriptorDto } from './types.ts'
 
-/** The artifact server's default local port, matching the host `config.port` default. */
-export const DEFAULT_PORT = 4182
-
-/** Origin of the local artifact server (127.0.0.1 only). */
-export function originOf(port: number): string {
-  return `http://127.0.0.1:${port}`
-}
-
-/** One JSON GET/POST against the artifact server; throws on non-2xx. */
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init)
+/** One JSON GET/POST（同源相对路径）；throws on non-2xx */
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init)
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
     throw new Error(`dvl: ${response.status} ${response.statusText} ${detail}`.trim())
@@ -27,19 +19,13 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 /** Fetch the full learning state for one workspace cwd. */
-export function fetchState(origin: string, cwd: string): Promise<LearningStateDto> {
-  return requestJson<LearningStateDto>(`${origin}/learning/api/state?cwd=${encodeURIComponent(cwd)}`)
+export function fetchState(cwd: string): Promise<LearningStateDto> {
+  return requestJson<LearningStateDto>(`${LEARNING_ROUTE_PREFIX}/api/state?cwd=${encodeURIComponent(cwd)}`)
 }
 
 /** POST the in-band present request and return the server's settlement. */
-export function inbandPresent(
-  origin: string,
-  workspaceId: string,
-  category: ArtifactCategory,
-  hash: string,
-  sessionId: string,
-): Promise<InbandPresentResult> {
-  return requestJson<InbandPresentResult>(`${origin}/learning/api/inband-present`, {
+export function inbandPresent(workspaceId: string, category: ArtifactCategory, hash: string, sessionId: string): Promise<InbandPresentResult> {
+  return requestJson<InbandPresentResult>(`${LEARNING_ROUTE_PREFIX}/api/inband-present`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workspaceId, category, hash, sessionId }),
@@ -47,16 +33,31 @@ export function inbandPresent(
 }
 
 /**
+ * Resolve a running present's canonical descriptor from the server by
+ * `cwd + callId`. Returns null when the server has no such running present
+ * (e.g. it settled already, or the tool has not created the run yet).
+ */
+export async function resolveDescriptor(cwd: string, callId: string): Promise<PresentArtifactDescriptorDto | null> {
+  const response = await fetch(`${LEARNING_ROUTE_PREFIX}/api/present/descriptor?cwd=${encodeURIComponent(cwd)}&callId=${encodeURIComponent(callId)}`)
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error(`dvl: ${response.status} ${response.statusText}`)
+  return response.json() as Promise<PresentArtifactDescriptorDto>
+}
+
+/** Fetch the global notes snapshot（不依赖任何 workspace） */
+export function fetchNotes(): Promise<NotesDto> {
+  return requestJson<NotesDto>(`${LEARNING_ROUTE_PREFIX}/api/notes`)
+}
+
+/**
  * Build the notes-action face over the shared `/learning/api/notes` endpoint.
- * Every mutation re-fetches the state (the notes snapshot rides it) so the
- * GUI cards stay in sync without a second polling loop.
- * @param origin - artifact server origin.
- * @param refresh - the caller's state re-fetch.
+ * Every mutation re-fetches the notes snapshot so the GUI stays in sync
+ * @param refresh - the caller's notes re-fetch.
  * @returns the notes CRUD face.
  */
-export function buildNotesActions(origin: string, refresh: () => Promise<void>): NotesActions {
+export function buildNotesActions(refresh: () => Promise<void>): NotesActions {
   const post = async (body: Record<string, unknown>): Promise<void> => {
-    await requestJson<{ ok?: boolean }>(`${origin}/learning/api/notes`, {
+    await requestJson<{ ok?: boolean }>(`${LEARNING_ROUTE_PREFIX}/api/notes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -80,7 +81,11 @@ export function buildNotesActions(origin: string, refresh: () => Promise<void>):
   }
 }
 
-/** Build an artifact's absolute serve URL (iframe and external browser alike). */
-export function artifactUrl(origin: string, workspaceId: string, category: ArtifactCategory, hash: string): string {
-  return `${origin}/learning/${workspaceId}/${category}/${hash}/index.html`
+/**
+ * Build an artifact's read-only preview URL (no run id → submission disabled).
+ * Canonical active-run URLs are never built here: they arrive from the server
+ * via the presentation descriptor.
+ */
+export function artifactUrl(workspaceId: string, category: ArtifactCategory, hash: string): string {
+  return `${LEARNING_ROUTE_PREFIX}/${workspaceId}/${category}/${hash}/index.html`
 }

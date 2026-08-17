@@ -38,10 +38,18 @@ export interface CardDto {
   readonly due: string | null
   readonly history: readonly {
     readonly at: string
-    readonly rating: number
-    readonly score?: number
-    readonly reviewHash?: string
+    readonly rating: 'again' | 'hard' | 'good' | 'easy'
+    readonly sourceRunId: string
+    readonly reason?: string
   }[]
+}
+
+/** One run of one artifact (status facts only, no payload bodies). */
+export interface ArtifactRunDto {
+  readonly runId: string
+  readonly createdAt: string
+  readonly hasResult: boolean
+  readonly hasFeedback: boolean
 }
 
 /** One authored artifact row (lesson/review/quiz) from the state response. */
@@ -53,8 +61,21 @@ export interface ArtifactDto {
     readonly title: string
     readonly createdAt: string
   }
-  readonly hasResult: boolean
-  readonly hasFeedback: boolean
+  readonly runs: readonly ArtifactRunDto[]
+}
+
+/** The server-issued canonical presentation descriptor. */
+export interface PresentArtifactDescriptorDto {
+  readonly version: 1
+  readonly callId: string
+  readonly workspaceId: string
+  readonly kind: 'lesson' | 'review' | 'quiz'
+  readonly category: string
+  readonly hash: string
+  readonly targetId: string
+  readonly title: string
+  readonly runId: string
+  readonly url: string
 }
 
 /** Note access level; the same three tiers the model surface understands. */
@@ -89,7 +110,8 @@ export interface NotesDto {
 export interface LearningStateDto {
   readonly workspaceId: string
   readonly cwd: string
-  readonly port: number
+  /** 本工作区是否为学习工作区（.dsh/learning 存在） */
+  readonly learningDirExists: boolean
   readonly activeOutlineId: string | null
   readonly outlines: readonly OutlineDto[]
   readonly cards: readonly CardDto[]
@@ -102,6 +124,25 @@ export interface LearningStateDto {
 /** The artifact URL categories as the server spells them in paths. */
 export type ArtifactCategory = 'lessons' | 'reviews' | 'quizzes'
 
+/** 加载域四态：idle 未开始 / loading 进行中 / ready 就绪 / error 失败 */
+export type LoadPhase = 'idle' | 'loading' | 'ready' | 'error'
+
+/** 学习域：active workspace 的学习状态 + 加载相位 */
+export interface LearningDomain {
+  readonly phase: LoadPhase
+  readonly state: LearningStateDto | null
+  /** 本工作区是否为学习工作区（.dsh/learning 存在） */
+  readonly isLearningWorkspace: boolean
+  readonly error: string | null
+}
+
+/** 笔记域：全局笔记 + 加载相位 */
+export interface NotesDomain {
+  readonly phase: LoadPhase
+  readonly notes: NotesDto | null
+  readonly error: string | null
+}
+
 /** `/learning/api/inband-present` response. */
 export interface InbandPresentResult {
   readonly ok: boolean
@@ -112,8 +153,8 @@ export interface InbandPresentResult {
 
 /**
  * Derive the URL-facing workspace id (sha256(cwd) 12-hex prefix) in the
- * browser. Mirrors the host `workspaceIdOf` so a client that only knows the
- * canonical cwd can still address the workspace without a prior state round-trip.
+ * browser. Mirrors the host `workspaceIdOf` for the read-only preview URL and
+ * the in-band present request; canonical run URLs are always server-issued.
  * @param cwd - canonical workspace directory.
  * @returns 12-hex-char lowercase workspace id.
  */

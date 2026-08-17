@@ -1,26 +1,27 @@
 /**
- * dsh-vibe-learning — Vibe Learning (DVL): a third-party learning-mode plugin for DeepSeek Harness.
- * One plugin entry composing the core service (`ctx.learning`), the per-session tools, the `/learn` command,
- * the course-authoring skill, and the artifact HTTP server.
+ * dsh-vibe-learning（DVL）：DeepSeek Harness 的第三方学习模式插件。
+ * 其包含核心服务、一系列会话工具、`/learn` 命令一套、课程创作 Skill 以及挂在 DSH webServer 上的学习工件路由。
  * @module dsh-vibe-learning
  */
 
 import { Context } from '@deepseek-ai/cordis'
 import LearningService from './learning/index.ts'
+// TODO：learning包应该改名叫core
 import type { Config as LearningConfig } from './learning/index.ts'
-import { installToolBoot } from './tool-learning'
-import { installLearnCommand } from './command-learning'
-import { installCourseAuthoringSkill } from './skill-learning'
-import { startArtifactServer } from './web'
+// TODO：他妈的，下面这几个包里的`-learning`都应该去掉
+import { installToolBoot } from './tool-learning/index.ts'
+import { installLearnCommand } from './command-learning/index.ts'
+import { installCourseAuthoringSkill } from './skill-learning/index.ts'
+import { installLearningRoutes } from './web/index.ts'
 
-/** Plugin display name — also the fiber name in diagnostics. */
+// 插件显示名称，也是诊断中的"光纤"名称
 export const name = 'dsh-vibe-learning'
 
 /**
  * External services the whole plugin consumes. `learning` is deliberately absent:
  * this plugin itself mounts it, so listing it would deadlock the loader's inject wait.
  */
-export const inject = ['commands', 'skills', 'tools', 'userQuestions', 'agents']
+export const inject = ['commands', 'skills', 'tools', 'userQuestions', 'agents', 'webServer']
 
 /** Plugin config schema (validated + defaulted by the loader). */
 export const Config = LearningService.Config
@@ -38,6 +39,8 @@ export function apply(ctx: Context, config?: LearningConfig): void {
     installToolBoot(scope)
     installLearnCommand(scope)
     installCourseAuthoringSkill(scope)
-    startArtifactServer(scope)
   })
+
+  // 学习工件路由：挂在 DSH webServer 的 /learning 前缀（同源，无独立端口）
+  ctx.inject(['learning', 'webServer'], (scope: Context) => installLearningRoutes(scope))
 }

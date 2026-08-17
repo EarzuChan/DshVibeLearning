@@ -75,14 +75,24 @@ async function execute(ctx: Context, invocation: CommandInvocation): Promise<Com
             return {kind: 'error', text: `${parsed.detail}\n${USAGE}`}
 
         case 'enter': {
-            const first = learning.enter(agent, '学习模式已开启。请先与用户共建学习大纲（了解想学什么、目标与基础），大纲经用户确认后通过 update_outline 落盘并 activate_outline 激活；若本工作区已有纲目，请提示用户用 /learn <outline-id> 激活或直接说出想学的纲目。')
+            let first: boolean
+            try {
+                first = await learning.enter(agent, '学习模式已开启。请先与用户共建学习大纲（了解想学什么、目标与基础），大纲经用户确认后通过 update_outline 落盘并 activate_outline 激活；若本工作区已有纲目，请提示用户用 /learn <outline-id> 激活或直接说出想学的纲目。')
+            } catch (error: unknown) {
+                return {kind: 'error', text: error instanceof Error ? error.message : String(error)}
+            }
 
             if (!first) return {kind: 'success', text: await statusText(ctx, agent)}
             return {kind: 'success', text: '学习模式已开启（一次性，不可退出）。'}
         }
 
         case 'activate': {
-            const first = learning.enter(agent, `用户通过 /learn 指定了纲目 ${parsed.outlineId}：请调用 activate_outline('${parsed.outlineId}') 激活它，然后向用户确认切换成功并报告当前进度。`)
+            let first: boolean
+            try {
+                first = await learning.enter(agent, `用户通过 /learn 指定了纲目 ${parsed.outlineId}：请调用 activate_outline('${parsed.outlineId}') 激活它，然后向用户确认切换成功并报告当前进度。`)
+            } catch (error: unknown) {
+                return {kind: 'error', text: error instanceof Error ? error.message : String(error)}
+            }
 
             if (!first) learning.notify(agent, `用户通过 /learn 要求切换纲目 ${parsed.outlineId}：请调用 activate_outline('${parsed.outlineId}') 激活它，然后向用户确认切换成功并报告当前进度。`)
             return {kind: 'success', text: `已通知模型切换到纲目 ${parsed.outlineId}。`}
@@ -94,21 +104,14 @@ async function execute(ctx: Context, invocation: CommandInvocation): Promise<Com
             const cwd = requireCwd(agent)
             if (cwd === null) return {kind: 'error', text: '本会话无工作区目录，无法复习。'}
 
-            try {
-                await learning.ensureCard(cwd, parsed.lessonId)
-            } catch (error: unknown) {
-                return {kind: 'error', text: error instanceof Error ? error.message : String(error)}
-            }
-
-            // THINKING：这不对，小连招的定义不在这里，这里说开启强制复习就行了，让流程走到期，然后后面的就并入普通复习
-            learning.notify(agent, `用户发起了一次强制复习（lessonId: ${parsed.lessonId}）：请按 DVL 规范执行小连招——生成一份全新的复习工件（review lesson，针对该课薄弱点），写入约定路径后 present_artifact(kind=review, target_id=...)；拿到 result 后批改（主观题按 rubric），把反馈写入工件旁的 feedback.json，最后回复用户。`)
+            learning.notify(agent, `用户发起了一次强制复习（lessonId: ${parsed.lessonId}）：请生成一份全新的复习工件（review，针对该课薄弱点），写入约定路径后 present_artifact(kind=review, target_id=...)；拿到 result 后批改（主观题按 rubric），用 save_feedback 保存报告，回复用户；如需推进复习计划，再调用 update_review_plan。`)
             return {kind: 'success', text: `已通知模型复习课程 ${parsed.lessonId}。`}
         }
 
         case 'quiz': {
             if (!learning.hasEntered(agent.session.events)) return {kind: 'error', text: `尚未进入学习模式。请先 /learn。\n${USAGE}`}
 
-            learning.notify(agent, `用户发起了一次小测（lessonId: ${parsed.lessonId}${parsed.prompt !== undefined ? `；用户要求：${parsed.prompt}` : ''}）：请按 DVL 规范执行小连招——生成一份 quiz 工件，写入约定路径后 present_artifact(kind=quiz, target_id=...)，拿到 result 后批改，把反馈写入工件旁的 feedback.json，最后回复用户。`)
+            learning.notify(agent, `用户发起了一次小测（lessonId: ${parsed.lessonId}${parsed.prompt !== undefined ? `；用户要求：${parsed.prompt}` : ''}）：请生成一份 quiz 工件，写入约定路径后 present_artifact(kind=quiz, target_id=...)，拿到 result 后批改，用 save_feedback 保存报告，最后回复用户。`)
 
             return {kind: 'success', text: `已通知模型对课程 ${parsed.lessonId} 发起小测。`}
         }

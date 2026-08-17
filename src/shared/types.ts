@@ -48,22 +48,56 @@ export interface ArtifactMeta {
   readonly createdAt: string
 }
 
-/** The result envelope the artifact submits; `payload` is free-form. */
+/**
+ * One presentation/answer attempt (`runs/<runId>/run.json`). Mechanism only:
+ * artifact identity, the owning tool call, and creation time. No pedagogical
+ * judgement lives here.
+ */
+export interface ArtifactRun {
+  readonly runId: string
+  readonly artifactHash: string
+  readonly kind: ArtifactKind
+  readonly targetId: string
+  /** The DSH tool `callId` that created/resumed this run (idempotency key). */
+  readonly callId: string
+  readonly createdAt: string
+}
+
+/**
+ * The mechanism envelope DVL wraps around an opaque submission
+ * (`runs/<runId>/result.json`). `payload` is the artifact's raw JSON value,
+ * preserved verbatim — DVL never parses its teaching semantics.
+ */
 export interface ResultEnvelope {
   readonly kind: ArtifactKind
   readonly targetId: string
+  readonly artifactHash: string
+  readonly runId: string
   readonly submittedAt: string
-  /** Objective score in [0,1] when the artifact reports one (FSRS input). */
-  readonly score?: number
-  /** Free-form submission JSON: auto-judged details + raw subjective answers. */
-  readonly payload?: unknown
+  /** Arbitrary JSON value as submitted by `window.DVL.submit(...)`. */
+  readonly payload: unknown
 }
 
-/** Model-written grading feedback (`feedback.json` beside the artifact). */
-export interface FeedbackFile {
-  /** The feedback body, markdown. */
-  readonly markdown: string
-  readonly gradedAt: string
+/**
+ * The mechanism envelope DVL wraps around the model's opaque grading report
+ * (`runs/<runId>/feedback.json`). `payload` is the model's raw JSON value,
+ * preserved verbatim — DVL never validates its schema or reads its meaning.
+ */
+export interface FeedbackEnvelope {
+  readonly kind: ArtifactKind
+  readonly targetId: string
+  readonly artifactHash: string
+  readonly runId: string
+  readonly savedAt: string
+  readonly payload: unknown
+}
+
+/** One run as listed under an artifact (no payload bodies, only status facts). */
+export interface ArtifactRunSummary {
+  readonly runId: string
+  readonly createdAt: string
+  readonly hasResult: boolean
+  readonly hasFeedback: boolean
 }
 
 export type NoteAccess = 'private' | 'readable' | 'readwrite'
@@ -96,14 +130,18 @@ export interface NotesDb {
   readonly notes: Note[]
 }
 
+/** The explicit FSRS rating a model reports after grading one run. */
+export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
+
 /** One finished review; kept in the card file's history. */
 export interface ReviewRecord {
   readonly at: string
-  /** FSRS grade: Again=1 Hard=2 Good=3 Easy=4. */
-  readonly rating: number
-  readonly score?: number
-  /** Artifact hash of that review lesson, for回看. */
-  readonly reviewHash?: string
+  /** Explicit model-reported FSRS rating (never derived from a score). */
+  readonly rating: ReviewRating
+  /** The result run this rating was drawn from (idempotency source). */
+  readonly sourceRunId: string
+  /** Optional free-form rationale for the rating. */
+  readonly reason?: string
 }
 
 /** Durable FSRS card file (`cards/<lessonId>.json`). */
@@ -112,6 +150,27 @@ export interface CardFile {
   /** Serialized ts-fsrs `Card`. */
   readonly card: Record<string, unknown>
   readonly history: ReviewRecord[]
+}
+
+/**
+ * Canonical presentation descriptor owned by the server. The toolview fetches
+ * it by `cwd + callId` while a present runs; after settlement it is recovered
+ * from the durable `present_artifact` tool result metadata.
+ */
+export interface PresentArtifactDescriptor {
+  readonly version: 1
+  readonly callId: string
+  readonly workspaceId: string
+  readonly kind: ArtifactKind
+  /** URL category segment: `lessons` | `reviews` | `quizzes`. */
+  readonly category: string
+  readonly hash: string
+  readonly targetId: string
+  readonly title: string
+  /** The active run's unguessable id (present in the canonical URL). */
+  readonly runId: string
+  /** Canonical active-run URL, issued by the server. */
+  readonly url: string
 }
 
 /** How an in-band `present_artifact` settles. */
@@ -123,14 +182,23 @@ export type PresentOutcome =
     readonly detail?: string
   }
 
-/** Score → FSRS grade thresholds (config). */
-export interface RatingThresholds {
-  /** Below this → Again. */
-  readonly again: number
-  /** Below this (at/above `again`) → Hard. */
-  readonly hard: number
-  /** Below this (at/above `hard`) → Good; at/above → Easy. */
-  readonly good: number
+/**
+ * The read-only candidate the review-plan tool shows before confirmation.
+ * Nothing here is durable until `commitReviewPlan` writes the card file.
+ */
+export interface ReviewPlanProposal {
+  readonly lessonId: string
+  readonly rating: ReviewRating
+  readonly sourceRunId: string
+  readonly reason?: string
+  /** Current card file (null when no card exists yet). */
+  readonly current: CardFile | null
+  /** Candidate next card after applying `rating`. */
+  readonly nextCard: Record<string, unknown>
+  /** Candidate next due, ISO timestamp. */
+  readonly due: string
+  /** Whether `sourceRunId` was already applied to this card's history. */
+  readonly alreadyApplied: boolean
 }
 
 /** What the per-turn snapshot (P2) injects about one outline. */
