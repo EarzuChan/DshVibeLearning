@@ -1,5 +1,3 @@
 node_modules/
 lib/
-.idea/
 *.tsbuildinfo
-.DS_Store

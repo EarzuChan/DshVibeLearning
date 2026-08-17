@@ -1,6 +1,9 @@
 # Local dev overlay: load this plugin from TypeScript source during the
-# `pnpm dsh web --patch ./cordis.yml` loop. The row references the source
-# path relative to this directory (the DSH CLI's tsx source launch).
+# `pnpm dsh --profile <p> --patch /abs/path/cordis.yml` loop. Relative row
+# paths resolve against the PROFILE dir, so keep absolute source paths here.
 - insert:
     - id: dsh-vibe-learning
-      name: './src/index.ts'
+      name: '/Users/earzuchan/Documents/Sources/DshVibeLearning/src/index.ts'
+      config:
+        port: 4182
+        dataDir: '/Users/earzuchan/.dsh-vibe-learning'
