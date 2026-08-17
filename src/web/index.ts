@@ -351,7 +351,7 @@ export function installLearningRoutes(ctx: Context): void {
           sessionId: brandSessionId(randomUUID()) as SessionId,
           meta: { cwd },
         })
-        handle.agent.session.append('learning/entered', { at: new Date().toISOString() })
+        learning.markEntered(handle.agent.session)
         handle.agent.steer(createUserMessage({
           content: [{ type: 'text', text: instruction }],
           source: { kind: 'plugin', plugin: 'learning-web' },

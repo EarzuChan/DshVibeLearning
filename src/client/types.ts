@@ -1,3 +1,5 @@
+// TODO：真系死老母啊，屌你妈妈只臭閪屌度嘅！如果冇合理嘅理由话要重复，俾我揾到嘅重复嘅定义...我嘅手段你知道
+
 /**
  * DVL browser-half wire types: the shapes the learning artifact server's JSON
  * GUI API returns and accepts. Everything here is JSON over `fetch` — never

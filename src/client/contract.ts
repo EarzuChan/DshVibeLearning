@@ -17,6 +17,7 @@ import type {
   ArtifactCategory, InbandPresentResult, LearningDomain, NotesDomain, PresentArtifactDescriptorDto,
 } from './types.ts'
 import type { createDvlViewStore } from './stores.ts'
+import {NoteAccess} from "../shared/types.ts"
 
 /** The copy namespace this plugin owns (see locales.ts). */
 type NS = 'vibeLearning'
@@ -32,14 +33,14 @@ export interface NotesActions {
     title: string
     markdown: string
     tags: string[]
-    access: 'private' | 'readable' | 'readwrite'
+    access: NoteAccess
   }) => Promise<void>
   updateNote: (noteId: string, input: {
     folderId?: string
     title?: string
     markdown?: string
     tags?: string[]
-    access?: 'private' | 'readable' | 'readwrite'
+    access?: NoteAccess
   }) => Promise<void>
   deleteNote: (noteId: string) => Promise<void>
 }

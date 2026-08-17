@@ -8,10 +8,6 @@
  * ## 笔记模型（agent）面
  *
  * **不按册**向模型列出笔记。模型通过工具，传入tag来筛选笔记，且private笔记不进结果
- *
- * ---
- *
- * @module dvl/learning/notes
  */
 
 import { randomUUID } from 'node:crypto'

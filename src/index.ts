@@ -1,5 +1,5 @@
 /**
- * dsh-vibe-learning（DVL）：DeepSeek Harness 的第三方学习模式插件。
+ * dsh-vibe-learning（DVL）：DeepSeek Harness 的第三方学习处境插件。
  * 其包含核心服务、一系列会话工具、`/learn` 命令一套、课程创作 Skill 以及挂在 DSH webServer 上的学习工件路由。
  * @module dsh-vibe-learning
  */

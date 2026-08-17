@@ -7,6 +7,7 @@ import {defineTool} from '@deepseek-ai/dsh-tools'
 import type {GenericCallView} from '@deepseek-ai/dsh-tools'
 import '@deepseek-ai/dsh-user-questions'
 import type {LearningService} from '../learning/index.ts'
+import {isLearningEntered} from '../shared/learning-event.ts'
 import {workspaceIdOf} from '../shared/hash.ts'
 import type {JsonValue} from '@deepseek-ai/dsh-session'
 import type {ArtifactKind, OutlineNode, PresentArtifactDescriptor, ReviewRating} from '../shared/types.ts'
@@ -345,7 +346,7 @@ function requireCwd(agent: Agent): string {
     return cwd
 }
 
-// 严格校验 Agent，已挂载的工具只为学习模式下的 Agent 服务
+// 严格校验 Agent，已挂载的工具只为学习处境下的 Agent 服务
 function requireOwner(exec: {agent?: Agent}, agent: Agent): void { if (exec.agent !== agent) throw new Error('dvl tool called for a foreign agent') }
 
 // ---------
@@ -365,7 +366,7 @@ async function reconcile(ctx: Context, agent: Agent, booted: WeakSet<Agent>): Pr
     if (shouldBoot) boot(ctx, agent, booted)
 }
 
-// 再有这个新的 Agent，或者是 Agent 进入这学习模式的时候，那给他调教一下
+// 再有这个新的 Agent，或者是 Agent 进入这学习处境的时候，那给他调教一下
 export function installToolBoot(ctx: Context): void {
     const booted = new WeakSet<Agent>()
 
@@ -377,7 +378,7 @@ export function installToolBoot(ctx: Context): void {
     ctx.effect(() => {
         const stopCreated = ctx.on('agent/created', ({agent}) => reconcileAgent(agent))
         const stopEvent = ctx.on('session/event', (session, event) => {
-            if (event.type !== 'learning/entered') return // 不是这个进入学习模式的事件，那连调教都懒得了
+            if (!isLearningEntered(event)) return // 不是进入标记事件，那连调教都懒得了
             const agent = ctx.agents.get(session.id)
             if (agent !== undefined) reconcileAgent(agent)
         })

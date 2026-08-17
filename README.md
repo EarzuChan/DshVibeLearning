@@ -16,7 +16,7 @@ dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
 
 | 块 | 职责 |
 |---|---|
-| `learning/` | `ctx.learning` 核心服务：工作区文件域、全局笔记、FSRS（ts-fsrs）、run 生命周期、canonical descriptor 注册表、`learning/entered` 事件、P0/P1/P2 prompt |
+| `learning/` | `ctx.learning` 核心服务：工作区文件域、全局笔记、FSRS（ts-fsrs）、run 生命周期、canonical descriptor 注册表、进入标记（借用官方 `feedback/record`）、P0/P1/P2 prompt |
 | `tool-learning/` | 10 个模型工具，按学习会话挂到 agent 作用域（非学习会话零工具） |
 | `command-learning/` | `/learn` 命令族 |
 | `skill-learning/` | `course-authoring` skill（catalog 描述 + 内联正文；`skill/course-authoring.md` 为同文源稿） |
@@ -63,7 +63,7 @@ dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
 
 ## 命令
 
-- `/learn` —— 进入学习模式（单向阀，一次性；模型回应并开始共建大纲）
+- `/learn` —— 进入学习处境（单向阀，一次性；模型回应并开始共建大纲）
 - `/learn <outline-id>` —— 进入并激活指定纲目（模型调 `activate_outline` 后回应）
 - `/learn review <lesson-id>` —— 强制复习（不建卡；模型生成 review 工件走作答后固定流程）
 - `/learn quiz <lesson-id> [要求]` —— 小测（作答后固定流程）
@@ -107,7 +107,6 @@ config:
 
 ## 已知限制（POC）
 
-- `learning/entered` 事件未标 `ignorable`：卸载 DVL 后含该事件的旧会话日志可能拒绝加载。
 - GUI in-band「新开会话」为实验路径（直接 `ctx.agents.create`，未走 preset 组合）。
 - 复习到期为被动提醒（每轮快照 + GUI）；无后台定时推送。
 - 大纲并发编辑无 CAS（tmp+rename 原子写，last-wins）。

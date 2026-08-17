@@ -14,7 +14,7 @@ export interface DvlLearningProjection {
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
-    /** 学习模式单向阀：由 learning/entered 事件折叠 */
+    /** 学习处境单向阀：由借用的官方 feedback/record 进入标记折叠 */
     dvlLearning: DvlLearningProjection
   }
 }

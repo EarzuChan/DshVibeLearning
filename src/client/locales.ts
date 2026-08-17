@@ -165,7 +165,7 @@ export const zh: Record<VibeLearningKey, string> = {
   'state.loading': '加载中…',
   'state.idle': '待命中',
   'state.error': '加载失败',
-  'card.outline.notLearning': '本会话未进入学习模式',
+  'card.outline.notLearning': '本会话未进入学习处境',
 }
 
 /** English dictionary. */
@@ -242,5 +242,5 @@ export const en: Record<VibeLearningKey, string> = {
   'state.loading': 'Loading…',
   'state.idle': 'Idle',
   'state.error': 'Load failed',
-  'card.outline.notLearning': 'Not in learning mode',
+  'card.outline.notLearning': 'Not Learning',
 }

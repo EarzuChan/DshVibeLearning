@@ -1,36 +1,25 @@
-/**
- * DVL durable JSON vocabulary. Everything here must survive `JSON.stringify`
- * round-trips; the workspace files (`<cwd>/.dsh/learning/**`) are the
- * authoritative copy.
- * @module dvl/shared/types
- */
+// DVL 持久化 JSON 类型定义，所有内容必须能经 JSON.stringify 往返，工作区 learning 文件是权威副本
 
-/** Course-progression state of one lesson node inside an outline. */
+// 单个课程节点的学习进度状态
 export type LessonState = 'not-started' | 'learning' | 'qa' | 'done'
 
-/** The three artifact kinds a model can author and present. */
+// 模型可创作并展示的三种工件类型
 export type ArtifactKind = 'lesson' | 'review' | 'quiz'
 
-/** One node of an outline tree. `group` nests; `lesson` is a leaf course. */
+// 纲目树中的一个节点，group 可嵌套，lesson 为叶子课程
 export interface OutlineNode {
   readonly id: string
   readonly kind: 'group' | 'lesson'
   readonly title: string
-  /** Sibling order; ascending. */
-  readonly order: number
-  /** `null` hangs directly under the outline root. */
-  readonly parentId: string | null
-  /** Stable course id (lesson nodes only; preserved across outline edits). */
-  readonly lessonId?: string
-  /** Course-progression state (lesson nodes only; default `not-started`). */
-  readonly state?: LessonState
-  /** Current lesson artifact content hash, when one has been presented. */
-  readonly artifactHash?: string
-  /** Optional free-form course goal/notes for the model. */
-  readonly description?: string
+  readonly order: number // 同级节点顺序，升序排列
+  readonly parentId: string | null // null 表示直接挂在纲目根节点下
+  readonly lessonId?: string // lesson 节点的稳定课程 ID，纲目修改时保持不变
+  readonly state?: LessonState // lesson 节点的学习进度状态，默认为 not-started
+  readonly artifactHash?: string // 已展示课程工件的当前内容哈希
+  readonly description?: string // 提供给模型的可选课程目标或备注
 }
 
-/** The durable outline file (`outlines/<id>.json`). */
+// 持久化纲目文件，对应 outlines/<id>.json
 export interface Outline {
   readonly id: string
   readonly title: string
@@ -39,50 +28,35 @@ export interface Outline {
   readonly nodes: OutlineNode[]
 }
 
-/** Per-artifact bookkeeping (`meta.json` beside `index.html`). */
+// 单个工件的元数据，对应 index.html 同目录下的 meta.json
 export interface ArtifactMeta {
   readonly kind: ArtifactKind
-  /** Lesson id this artifact belongs to (review/quiz artifacts too). */
-  readonly targetId: string
+  readonly targetId: string // 工件所属课程 ID，review 和 quiz 亦如此
   readonly title: string
   readonly createdAt: string
 }
 
-/**
- * One presentation/answer attempt (`runs/<runId>/run.json`). Mechanism only:
- * artifact identity, the owning tool call, and creation time. No pedagogical
- * judgement lives here.
- */
+// 一次工件展示或作答尝试，只记录机制信息，不包含教学判断
 export interface ArtifactRun {
   readonly runId: string
   readonly artifactHash: string
   readonly kind: ArtifactKind
   readonly targetId: string
-  /** The DSH tool `callId` that created/resumed this run (idempotency key). */
-  readonly callId: string
+  readonly callId: string // 创建或恢复该运行的 DSH 工具 callId，同时作为幂等键
   readonly createdAt: string
 }
 
-/**
- * The mechanism envelope DVL wraps around an opaque submission
- * (`runs/<runId>/result.json`). `payload` is the artifact's raw JSON value,
- * preserved verbatim — DVL never parses its teaching semantics.
- */
+// DVL 包装不透明提交结果的机制信封，对应 runs/<runId>/result.json，payload 原样保存且不解析教学语义
 export interface ResultEnvelope {
   readonly kind: ArtifactKind
   readonly targetId: string
   readonly artifactHash: string
   readonly runId: string
   readonly submittedAt: string
-  /** Arbitrary JSON value as submitted by `window.DVL.submit(...)`. */
-  readonly payload: unknown
+  readonly payload: unknown // window.DVL.submit(...) 提交的任意 JSON 值
 }
 
-/**
- * The mechanism envelope DVL wraps around the model's opaque grading report
- * (`runs/<runId>/feedback.json`). `payload` is the model's raw JSON value,
- * preserved verbatim — DVL never validates its schema or reads its meaning.
- */
+// DVL 包装模型不透明判阅报告的机制信封，对应 runs/<runId>/feedback.json，payload 原样保存且不校验结构
 export interface FeedbackEnvelope {
   readonly kind: ArtifactKind
   readonly targetId: string
@@ -92,7 +66,7 @@ export interface FeedbackEnvelope {
   readonly payload: unknown
 }
 
-/** One run as listed under an artifact (no payload bodies, only status facts). */
+// 工件下展示的一次运行摘要，只包含状态信息而不包含 payload
 export interface ArtifactRunSummary {
   readonly runId: string
   readonly createdAt: string
@@ -100,122 +74,96 @@ export interface ArtifactRunSummary {
   readonly hasFeedback: boolean
 }
 
+// 笔记访问权限
 export type NoteAccess = 'private' | 'readable' | 'readwrite'
 
+// 笔记文件夹
 export interface NoteFolder {
   readonly id: string
   readonly name: string
   readonly createdAt: string
 }
 
-/**
- * One note. Storage is global (plugin data dir), never the workspace.
- * `tags` use prefixes: `workspace:<id>`, `outline:<id>`, `lesson:<id>`
- * (any count). The model surface sees only `readable`/`readwrite` notes whose
- * tags include the current workspace.
- */
+// 一条全局存储的笔记，模型只能看到当前权限为 readable 或 readwrite 的笔记
 export interface Note {
   readonly id: string
   readonly folderId: string
   readonly title: string
   readonly markdown: string
-  readonly tags: readonly string[]
+  readonly tags: readonly string[] // 使用 workspace:<id>、outline:<id>、lesson:<id> 等前缀，可同时存在多个
   readonly access: NoteAccess
   readonly createdAt: string
   readonly updatedAt: string
 }
 
+// 笔记数据库
 export interface NotesDb {
   readonly folders: NoteFolder[]
   readonly notes: Note[]
 }
 
-/** The explicit FSRS rating a model reports after grading one run. */
+// 模型完成一次判阅后明确给出的 FSRS 评级
 export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
 
-/** One finished review; kept in the card file's history. */
+// 一次已完成的复习记录，持久保存在卡片历史中
 export interface ReviewRecord {
   readonly at: string
-  /** Explicit model-reported FSRS rating (never derived from a score). */
-  readonly rating: ReviewRating
-  /** The result run this rating was drawn from (idempotency source). */
-  readonly sourceRunId: string
-  /** Optional free-form rationale for the rating. */
-  readonly reason?: string
+  readonly rating: ReviewRating // 模型明确给出的 FSRS 评级，不从分数推导
+  readonly sourceRunId: string // 评级来源的结果运行，同时作为幂等来源
+  readonly reason?: string // 可选的评级理由
 }
 
-/** Durable FSRS card file (`cards/<lessonId>.json`). */
+// 持久化 FSRS 卡片文件，对应 cards/<lessonId>.json
 export interface CardFile {
   readonly lessonId: string
-  /** Serialized ts-fsrs `Card`. */
-  readonly card: Record<string, unknown>
+  readonly card: Record<string, unknown> // 序列化后的 ts-fsrs Card
   readonly history: ReviewRecord[]
 }
 
-/**
- * Canonical presentation descriptor owned by the server. The toolview fetches
- * it by `cwd + callId` while a present runs; after settlement it is recovered
- * from the durable `present_artifact` tool result metadata.
- */
+// 服务端持有的规范展示描述符，展示期间可通过 cwd + callId 获取，结束后从持久化工具结果元数据恢复
 export interface PresentArtifactDescriptor {
   readonly version: 1
   readonly callId: string
   readonly workspaceId: string
   readonly kind: ArtifactKind
-  /** URL category segment: `lessons` | `reviews` | `quizzes`. */
-  readonly category: string
+  readonly category: string // URL 分类路径段，即 lessons、reviews 或 quizzes
   readonly hash: string
   readonly targetId: string
   readonly title: string
-  /** The active run's unguessable id (present in the canonical URL). */
-  readonly runId: string
-  /** Canonical active-run URL, issued by the server. */
-  readonly url: string
+  readonly runId: string // 当前运行不可猜测的 ID，同时存在于规范 URL 中
+  readonly url: string // 服务端签发的当前运行规范 URL
 }
 
-/** How an in-band `present_artifact` settles. */
-export type PresentOutcome =
-  | { readonly kind: 'result'; readonly result: ResultEnvelope }
-  | {
-    readonly kind: 'no-result'
-    readonly reason: 'interrupted' | 'timeout' | 'error'
-    readonly detail?: string
-  }
+// present_artifact 的带内结束结果
+export type PresentOutcome = { readonly kind: 'result'; readonly result: ResultEnvelope } | { readonly kind: 'no-result'; readonly reason: 'interrupted' | 'timeout' | 'error'; readonly detail?: string }
 
-/**
- * The read-only candidate the review-plan tool shows before confirmation.
- * Nothing here is durable until `commitReviewPlan` writes the card file.
- */
+// 复习计划工具确认写入前展示的只读候选，commitReviewPlan 写入卡片文件前均不持久化
 export interface ReviewPlanProposal {
   readonly lessonId: string
   readonly rating: ReviewRating
   readonly sourceRunId: string
   readonly reason?: string
-  /** Current card file (null when no card exists yet). */
-  readonly current: CardFile | null
-  /** Candidate next card after applying `rating`. */
-  readonly nextCard: Record<string, unknown>
-  /** Candidate next due, ISO timestamp. */
-  readonly due: string
-  /** Whether `sourceRunId` was already applied to this card's history. */
-  readonly alreadyApplied: boolean
+  readonly current: CardFile | null // 当前卡片文件，不存在时为 null
+  readonly nextCard: Record<string, unknown> // 应用 rating 后的候选下一张卡片
+  readonly due: string // 候选下次复习时间，ISO 时间戳
+  readonly alreadyApplied: boolean // sourceRunId 是否已存在于当前卡片历史中
 }
 
-/** What the per-turn snapshot (P2) injects about one outline. */
+// 每轮快照注入的单个纲目信息
 export interface SnapshotOutline {
   readonly id: string
   readonly title: string
   readonly active: boolean
 }
 
-/** What the per-turn snapshot injects about a course currently in flight. */
+// 每轮快照注入的当前进行中课程信息
 export interface SnapshotLesson {
   readonly id: string
   readonly title: string
   readonly state: LessonState
 }
 
-/** What the per-turn snapshot injects about a due review. */
+// 每轮快照注入的到期复习信息
 export interface SnapshotCard {
   readonly lessonId: string
   readonly lessonTitle: string
@@ -224,14 +172,12 @@ export interface SnapshotCard {
   readonly overdue: boolean
 }
 
-/** Full learning-state snapshot for the P2 prompt and the GUI API. */
+// 注入 P2 prompt 与 GUI API 的完整学习状态快照
 export interface LearningSnapshot {
   readonly workspaceId: string
   readonly learningDirExists: boolean
   readonly activeOutlineId: string | null
   readonly outlines: SnapshotOutline[]
-  /** Lessons in `learning`/`qa` state (the current course position). */
-  readonly currentLessons: SnapshotLesson[]
-  /** Cards due now, ascending by due time. */
-  readonly dueCards: SnapshotCard[]
+  readonly currentLessons: SnapshotLesson[] // 处于 learning 或 qa 状态的课程，即当前课程位置
+  readonly dueCards: SnapshotCard[] // 当前已到期卡片，按 due 时间升序排列
 }

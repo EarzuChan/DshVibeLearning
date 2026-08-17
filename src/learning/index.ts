@@ -21,6 +21,7 @@ import { NotesStore } from './notes.ts'
 import { dvlLearningProjection } from './projection.ts'
 import { BOOT_LINE, FULL_GUIDE, renderSnapshot } from './prompt.ts'
 import { isSafeSegment, workspaceIdOf } from '../shared/hash.ts'
+import { isLearningEntered, learningEnteredText } from '../shared/learning-event.ts'
 import { LEARNING_ROUTE_PREFIX } from '../shared/routes.ts'
 import type {
   ArtifactKind, ArtifactRun, CardFile, FeedbackEnvelope, LearningSnapshot, Outline,
@@ -31,19 +32,6 @@ import type {
 declare module '@deepseek-ai/cordis' {
   interface Context {
     learning: LearningService
-  }
-}
-
-declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    /**
-     * One-way valve: this session entered learning mode. Appended once by the
-     * `/learn` command and never removed; resumes replay it to re-boot the
-     * DVL surface (tools, full prompt, UI).
-     */
-    'learning/entered': {
-      at: string
-    }
   }
 }
 
@@ -112,7 +100,7 @@ export class LearningService extends Service {
       })
     })
 
-    // 注册学习模式投影：客户端 useProjection('dvlLearning') 的唯一事实源
+    // 注册学习处境投影：客户端 useProjection('dvlLearning') 的唯一事实源
     ctx.inject(['sessionProjections'], (scope: Context) => {
       scope.sessionProjections.register(dvlLearningProjection)
     })
@@ -152,9 +140,18 @@ export class LearningService extends Service {
 
   // ── session / workspace helpers ──────────────────────────────────────────
 
-  /** The one-way valve fold: entered when any `learning/entered` event exists. */
+  /** 单向阀折叠：存在本包的 feedback/record 进入标记即视为已进入学习处境 */
   hasEntered(events: readonly SessionEvent[]): boolean {
-    return events.some(event => event.type === 'learning/entered')
+    return events.some(isLearningEntered)
+  }
+
+  /**
+   * 标记本会话已进入学习处境：借用官方 feedback/record 事件（text 带 dvl:// 前缀）作单向阀——
+   * 官方事件保证不入模型上下文/派生历史且在加载白名单内，重开会话不再拒载；
+   * 只有真正进入的入口（/learn、/learn <outline-id>、学习面板新开会话）才调用它
+   */
+  markEntered(session: Session): void {
+    session.append('feedback/record', { text: learningEnteredText(new Date().toISOString()) })
   }
 
   /** A session's workspace cwd, when its header carries one. */
@@ -163,18 +160,18 @@ export class LearningService extends Service {
   }
 
   /**
-   * 进入学习模式：先确保学习工作区存在（mkdir 幂等），再追加单向事件——
+   * 进入学习处境：先确保学习工作区存在（mkdir 幂等），再追加单向事件——
    * 事件一旦存在，工作区必然已是学习工作区
    */
   async enter(agent: Agent, notice: string): Promise<boolean> {
     if (this.hasEntered(agent.session.events)) return false
 
     const cwd = this.sessionCwd(agent)
-    if (cwd === null) throw new Error('dvl: 进入学习模式需要会话工作区目录（/learn）')
+    if (cwd === null) throw new Error('dvl: 进入学习处境需要会话工作区目录（/learn）')
 
     await this.filesFor(cwd).ensureRoot()
     this.registerWorkspace(cwd)
-    agent.session.append('learning/entered', { at: new Date().toISOString() })
+    this.markEntered(agent.session)
     agent.steer(noticeMessage(notice))
     return true
   }

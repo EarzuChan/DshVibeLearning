@@ -1,5 +1,5 @@
 /**
- * The human-facing `/learn` command family: enter learning mode (one-way),
+ * The human-facing `/learn` command family: enter 学习处境 (one-way),
  * switch the active outline, and hand review/quiz intents to the model.
  * Read-only status stays in the GUI; every command here has an effect and wakes the model.
  * @module dvl/command-learning
@@ -48,10 +48,10 @@ async function statusText(ctx: Context, agent: Agent): Promise<string> {
     const learning = ctx.learning
 
     const cwd = requireCwd(agent)
-    if (cwd === null) return Promise.resolve('学习模式已开启（本会话无工作区目录）。') // CHECK：Whaaaat？
+    if (cwd === null) return Promise.resolve('学习处境已开启（本会话无工作区目录）。') // CHECK：Whaaaat？
 
     const snapshot = await learning.snapshot(cwd)
-    const lines: string[] = ['学习模式已开启。']
+    const lines: string[] = ['学习处境已开启。']
 
     if (snapshot.activeOutlineId === null) lines.push('当前没有激活纲目；/learn <outline-id> 可激活。')
     else {
@@ -77,13 +77,13 @@ async function execute(ctx: Context, invocation: CommandInvocation): Promise<Com
         case 'enter': {
             let first: boolean
             try {
-                first = await learning.enter(agent, '学习模式已开启。请先与用户共建学习大纲（了解想学什么、目标与基础），大纲经用户确认后通过 update_outline 落盘并 activate_outline 激活；若本工作区已有纲目，请提示用户用 /learn <outline-id> 激活或直接说出想学的纲目。')
+                first = await learning.enter(agent, '学习处境已开启。请先与用户共建学习大纲（了解想学什么、目标与基础），大纲经用户确认后通过 update_outline 落盘并 activate_outline 激活；若本工作区已有纲目，请提示用户用 /learn <outline-id> 激活或直接说出想学的纲目。')
             } catch (error: unknown) {
                 return {kind: 'error', text: error instanceof Error ? error.message : String(error)}
             }
 
             if (!first) return {kind: 'success', text: await statusText(ctx, agent)}
-            return {kind: 'success', text: '学习模式已开启（一次性，不可退出）。'}
+            return {kind: 'success', text: '学习处境已开启（一次性，不可退出）。'}
         }
 
         case 'activate': {
@@ -99,7 +99,7 @@ async function execute(ctx: Context, invocation: CommandInvocation): Promise<Com
         }
 
         case 'review': {
-            if (!learning.hasEntered(agent.session.events)) return {kind: 'error', text: `尚未进入学习模式。请先 /learn。\n${USAGE}`}
+            if (!learning.hasEntered(agent.session.events)) return {kind: 'error', text: `尚未进入学习处境。请先 /learn。\n${USAGE}`}
 
             const cwd = requireCwd(agent)
             if (cwd === null) return {kind: 'error', text: '本会话无工作区目录，无法复习。'}
@@ -109,7 +109,7 @@ async function execute(ctx: Context, invocation: CommandInvocation): Promise<Com
         }
 
         case 'quiz': {
-            if (!learning.hasEntered(agent.session.events)) return {kind: 'error', text: `尚未进入学习模式。请先 /learn。\n${USAGE}`}
+            if (!learning.hasEntered(agent.session.events)) return {kind: 'error', text: `尚未进入学习处境。请先 /learn。\n${USAGE}`}
 
             learning.notify(agent, `用户发起了一次小测（lessonId: ${parsed.lessonId}${parsed.prompt !== undefined ? `；用户要求：${parsed.prompt}` : ''}）：请生成一份 quiz 工件，写入约定路径后 present_artifact(kind=quiz, target_id=...)，拿到 result 后批改，用 save_feedback 保存报告，最后回复用户。`)
 
@@ -122,7 +122,7 @@ async function execute(ctx: Context, invocation: CommandInvocation): Promise<Com
 export function installLearnCommand(ctx: Context): void {
     ctx.commands.register({
         name: 'learn',
-        description: '进入学习模式 / 切换纲目 / 复习 / 小测',
+        description: '进入学习处境 / 切换纲目 / 复习 / 小测',
         input: {hint: '[<outline-id>|review <lesson-id>|quiz <lesson-id> [要求]]'},
         handler: invocation => execute(ctx, invocation),
     })

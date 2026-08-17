@@ -154,11 +154,12 @@ const notesGet = await fetch(`http://127.0.0.1:${PORT}/learning/api/notes`)
 const notesBody = await notesGet.json()
 console.log('NOTES_ENDPOINT:', notesGet.status === 200, Array.isArray(notesBody.folders), Array.isArray(notesBody.notes))
 
-// 18. 投影折叠：dvlLearning 单向阀（空日志 → 未进入；learning/entered → entered 且幂等）
+// 18. 投影折叠：dvlLearning 单向阀（空日志 → 未进入；feedback/record 进入标记 → entered 且幂等）
 const { dvlLearningProjection } = await import('../lib/learning/projection.js')
+const { learningEnteredText } = await import('../lib/shared/learning-event.js')
 const emptySnap = dvlLearningProjection.view(dvlLearningProjection.apply(dvlLearningProjection.init(), { type: 'other', data: {} }))
-const enteredState = dvlLearningProjection.apply(dvlLearningProjection.init(), { type: 'learning/entered', data: { at: '2026-08-17T00:00:00.000Z' } })
-const enteredAgain = dvlLearningProjection.apply(enteredState, { type: 'learning/entered', data: { at: '2099-01-01T00:00:00.000Z' } })
+const enteredState = dvlLearningProjection.apply(dvlLearningProjection.init(), { type: 'feedback/record', data: { text: learningEnteredText('2026-08-17T00:00:00.000Z') } })
+const enteredAgain = dvlLearningProjection.apply(enteredState, { type: 'feedback/record', data: { text: learningEnteredText('2099-01-01T00:00:00.000Z') } })
 const enteredSnap = dvlLearningProjection.view(enteredState)
 const againSnap = dvlLearningProjection.view(enteredAgain)
 console.log('PROJECTION:', emptySnap.entered === false, enteredSnap.entered === true, enteredSnap.enteredAt === '2026-08-17T00:00:00.000Z', againSnap.enteredAt === enteredSnap.enteredAt)
