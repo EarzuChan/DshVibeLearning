@@ -1,5 +1,5 @@
-import {Context} from '@deepseek-ai/cordis'
-import '@deepseek-ai/dsh-skill' // 向 ctx 提供 skills
+import type {Context} from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-skill' // 向 ctx 提供 skills
 
 // THINKING：这里暂时写得比较简略。。。最后再写好点
 

@@ -4,9 +4,8 @@ import {useMemo, useState} from 'react'
 import clsx from 'clsx'
 import {IconChevronDownOutline14} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {OutlineCardProps} from './contract.ts'
-import '../shared/projection.ts'
+import type {} from '../shared/projection.ts'
 import type {OutlineNode} from '../shared/model.ts'
-// @ts-ignore。IDEA抽风
 import css from './OutlineCard.module.css'
 
 // 当前课程状态对应的显示标签
@@ -34,7 +33,6 @@ function lessonNodes(nodes: readonly OutlineNode[]): OutlineNode[] {
 }
 
 // 渲染可折叠的当前纲目卡片
-// @ts-ignore。IDEA抽风
 export function OutlineCard({useLearning, useProjection, t}: OutlineCardProps) {
   const learning = useLearning(s => s.learning)
   const projection = useProjection('dvlLearning')

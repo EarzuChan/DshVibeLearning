@@ -1,6 +1,3 @@
-// @ts-ignore
-// @ts-ignore
-
 export const NS = 'vibeLearning'
 
 export type VibeLearningKey =
@@ -78,7 +75,6 @@ export type VibeLearningKey =
   | 'state.error'
   | 'card.outline.notLearning'
 
-// @ts-ignore。傻逼IDEA抽风
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     vibeLearning: VibeLearningKey
@@ -87,9 +83,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 export const zh: Record<VibeLearningKey, string> = {
   'view.label': '学习',
-  'tab.outlines': '纲目们',
-  'tab.reviews': '复习们',
-  'tab.quizzes': '小测们',
+  'tab.outlines': '纲目',
+  'tab.reviews': '复习',
+  'tab.quizzes': '小测',
   'toolbar.refresh': '刷新',
   'toolbar.refreshing': '刷新中…',
   'outlines.empty': '暂无纲目',

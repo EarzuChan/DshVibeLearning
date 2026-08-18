@@ -1,6 +1,4 @@
-# Bundle layer applied when a profile lists `dsh-vibe-learning`.
-# The row references the package by its bare name so Node resolves the
-# installed (built) code, not a source path.
+# DVL 组合包入口，由 DSH 配置档案挂载已安装的正式构建产物
 - insert:
     - id: dsh-vibe-learning
       name: dsh-vibe-learning

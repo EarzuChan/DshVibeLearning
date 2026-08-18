@@ -4,7 +4,7 @@
  * @module dsh-vibe-learning
  */
 
-import { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import LearningService from './core/index.ts'
 import type {Config as LearningConfig} from './core/index.ts'
 import {installToolBoot} from './tool/index.ts'

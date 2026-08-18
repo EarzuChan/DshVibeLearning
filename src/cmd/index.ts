@@ -1,6 +1,6 @@
 // DVL 面向用户的 /learn 命令族：单向进入氛围学习、切换激活纲目，并把复习与小测意图交给模型处理
 
-import {Context} from '@deepseek-ai/cordis'
+import type {Context} from '@deepseek-ai/cordis'
 import type {Agent} from '@deepseek-ai/dsh-agent'
 import type {CommandInvocation, CommandResult} from '@deepseek-ai/dsh-commands'
 import {isSafeSegment} from '../core/identifiers.ts'

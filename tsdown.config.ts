@@ -32,6 +32,7 @@ const config: UserConfig = {
     format: 'cjs',
     platform: 'browser',
     dts: false,
+    tsconfig: 'src/frontend/tsconfig.json',
     sourcemap: true,
     clean: false,
     external: [...CLIENT_EXTERNALS],

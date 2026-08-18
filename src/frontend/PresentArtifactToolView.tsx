@@ -4,7 +4,6 @@ import {useEffect, useState} from 'react'
 import type {ToolResultNode} from '@deepseek-ai/dsh-client-runtime/client'
 import type {PresentToolViewProps} from './contract.ts'
 import type {PresentArtifactDescriptor} from '../shared/api.ts'
-// @ts-ignore。IDEA抽风
 import css from './PresentArtifactToolView.module.css'
 
 // present_artifact 结束后的四种状态
@@ -59,7 +58,6 @@ const FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-modals 
 
 // 渲染 present_artifact 工具视图
 export function PresentArtifactToolView(props: PresentToolViewProps) {
-  // @ts-ignore：IDEA抽风
   const {callId, block, cwd, t, actions, resolveDescriptor} = props
   const settled = 'kind' in block
   const outcome: SettleOutcome | null = settled ? settleOutcomeOf(block) : null
@@ -122,7 +120,6 @@ export function PresentArtifactToolView(props: PresentToolViewProps) {
   const outcomeLabel = settled ? outcome === 'submitted' ? t('present.outcome.submitted') : outcome === 'timeout' ? t('present.outcome.timeout') : outcome === 'interrupted' ? t('present.outcome.interrupted') : t('present.outcome.error') : t('present.running')
   const title = descriptor?.title ?? t('present.title')
 
-  // @ts-ignore：IDEA抽风。TODO：看怎么把这个他妈的彻底制止了，也连这个ignore注释也不用写最好
   return (
       <div className={css.root} data-settled={settled || undefined} data-outcome={outcome ?? 'running'}>
         <div className={css.header}>

@@ -1,11 +1,11 @@
 // 仅在学习会话中挂载到对应 Agent 的作用域 `agent.ctx`，非学习会话不泄露这些工具。写入类工具会在工具内部通过 userQuestions 请求确认，无需模型预先询问
 
-import {Context} from '@deepseek-ai/cordis'
+import type {Context} from '@deepseek-ai/cordis'
 import type {Agent} from '@deepseek-ai/dsh-agent'
 import type {ContentBlock} from '@deepseek-ai/dsh-llm'
 import {defineTool} from '@deepseek-ai/dsh-tools'
 import type {GenericCallView} from '@deepseek-ai/dsh-tools'
-import '@deepseek-ai/dsh-user-questions'
+import type {} from '@deepseek-ai/dsh-user-questions'
 import type {LearningService} from '../core/index.ts'
 import {isLearningEntered} from '../core/learning-event.ts'
 import {workspaceIdOf} from '../core/identifiers.ts'

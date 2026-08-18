@@ -1,7 +1,7 @@
 // DVL 浏览器端 slot 契约：定义学习入口与两张浮动卡片注入的业务接口，组件只通过 store 与回调访问业务数据
 
 import type {PropsRuntime, PropsStore, InjectFace, PropsLocale, HostObservable} from '@deepseek-ai/dsh-client-ui-slots'
-import '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于引入 ui-conversation 的 SlotMap 类型合并
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于引入 ui-conversation 的 SlotMap 类型合并
 import type {ToolCallViewProps} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
 import type {InbandPresentResult, PresentArtifactDescriptor} from '../shared/api.ts'

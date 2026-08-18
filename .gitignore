@@ -1,11 +1,49 @@
+# Dependencies
 node_modules/
-lib/
-.env
-*.tsbuildinfo
-pnpm-debug.log
 .pnpm-store/
+
+# Build output
+dist/
+build/
+lib/
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# 保留环境变量示例文件
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Testing / coverage
+coverage/
+
+# Cache
 .cache/
-tmp/
-.vscode/
-.DS_Store
+.vite/
+.turbo/
+
+# IDE / Editor
 .idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+tmp/

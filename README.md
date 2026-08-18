@@ -1,15 +1,20 @@
 # dsh-vibe-learning — Vibe Learning (DVL)
 
-一个 **DeepSeek Harness（dsh）的第三方学习插件**：把会话变成「学习会话」——与用户共建多层大纲（主纲/子纲/课程）、上课（交互式课程 WebApp）、课后答疑、FSRS 复习、小测、记笔记。
-
-源码系独立仓库、单独发布；只以 peerDependency 依赖 `@deepseek-ai/dsh-*`。
+一个 DeepSeek Harness 的氛围学习插件：在会话中开启氛围学习，让 Agent 能与用户共建多层大纲、交互式上课与课后答疑、安排 FSRS 复习计划、创建小测，以及允许用户在DSH内直接记笔记。
 
 # 最高指示：以下文档未修订，未必对，可以不看
 
 ## 加载
 
+单次实例体验：
 ```sh
-dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
+dsh --profile web --patch /pathToYour/DshVibeLearning/cordis.patch.yml --port 3090 # 在 3090 上运行本实例，不干扰可能的3080默认实例
+```
+
+持久安装使用：
+```sh
+dsh plugin --profile web add dsh-vibe-learning # 安装到 web 这个配置
+dsh web # 默认实例持久生效
 ```
 
 ## 组成
@@ -48,9 +53,9 @@ dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
 - result = DVL 机制信封（`kind/targetId/artifactHash/runId/submittedAt` + 不透明 `payload`），**DVL 不解析教学语义**；feedback = 每 run 一份的机制信封（`runId/savedAt` + 不透明 `payload`），同样不解析其 schema。
 - 笔记 = 全局存储（config `dataDir`，默认 `~/.dsh-vibe-learning/notes.json`），不属于任何工作区文件；模型面按「当前工作区 + tags」过滤。
 
-## 提交（不透明 JSON）
+## 提交
 
-工件调用系统注入的 `window.DVL.submit(anyJsonValue)`；`anyJsonValue` 是任意 JSON 值（对象/数组/原始值/null）。bridge 只把 payload POST 到**页面相对**的 `./submit`——run 身份来自 canonical URL（`/…/runs/<runId>/index.html` → `/…/runs/<runId>/submit`），工件不携带也不回传任何机制字段；只读预览页没有 run 段，其 `./submit` 被服务器拒绝。DVL 只做 JSON/体积校验、run 归属校验、原子幂等落盘、完整返回给模型——**不解析题型、答案结构、correctness、rubric、score 或总分**。
+工件调用系统注入的 `window.DVL.submit(anyJsonValue)`；`anyJsonValue` 是任意 JSON，作为这次课程 Run 的结果载荷。只读预览页没有 Run 段，服务器拒绝其的 `./submit` 。DVL 只做 JSON/体积校验、run 归属校验、原子幂等落盘，结果载荷完整返回给模型（以让模型进行后续批改作业）。
 
 ## 模型批改链路
 
@@ -67,9 +72,6 @@ dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
 ## 命令
 
 - `/learn` —— 进入氛围学习（单向阀，一次性；模型回应并开始共建大纲）
-- `/learn <outline-id>` —— 进入并激活指定纲目（模型调 `activate_outline` 后回应）
-- `/learn review <lesson-id>` —— 强制复习（不建卡；模型生成 review 工件走作答后固定流程）
-- `/learn quiz <lesson-id> [要求]` —— 小测（作答后固定流程）
 
 ## 工具（模型面，10 个）
 
@@ -88,29 +90,23 @@ dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
 
 ## 客户端 UI（`src/frontend/`）
 
-学习 tab（纲目们/复习们/小测们，含每工件 run 历史）、对话页两个悬浮卡（当前纲目卡、笔记卡）、`present_artifact` keyed toolview（running 展开 iframe、settled 自动收起并可回看）。数据直连 `/learning/api/state` 等本地端点。入口 `src/frontend/index.ts` 以 `inject` + `apply` 形式注册 `conversation.view`、`conversation.session.header.utilities` 与 `tool.call.toolview`（key `present_artifact`），共享一个 store handle（每会话一实例）；`dsh.client` manifest（`platform: 'web'`）已在 package.json 声明，`inject` 含 `@deepseek-ai/dsh-client-ui-tool`。
+有：学习 tab（纲目/复习/小测，含每工件 run 历史）、对话页两个悬浮卡（当前纲目卡、笔记卡）、`present_artifact` Keyed Tool View（以提供对话IN-BAND课程学习体验）。
 
 **官方 Web shell 不含第三方客户端包**：并入需在你的自定义 shell 的 bundle patch 里加 `dsh.client` 行并重建（官方主仓库不动）。
 
-> 浏览器加载是**单文件 bundle**（`/plugins/<id>/client.js`，含 CSS Modules 内联与 `__ModuleLoader__` 工厂壳）。本仓库 `tsdown.config.ts` 复刻了 DsHarness 的 `clientBundle` 客户端面，`pnpm run build` 已产出 `lib/client.js`（`exports["./client"]` 指向它）。
+> 浏览器加载是**单文件 bundle**（`/plugins/<id>/client.js`，含 CSS Modules 内联与 `__ModuleLoader__` 工厂壳）。本仓库 `tsdown.config.ts` 复刻了 DsHarness 的 `clientBundle` 客户端面，`pnpm run build` 产出 `lib/client.js`（`exports["./client"]` 指向它）。
 
-## 配置（插件 row 的 config，全部有默认值）
+## 配置（插件 config，全部有默认值）
 
 ```yaml
 config:
-  port: 4182                  # 工件服务器端口（127.0.0.1）
   dataDir: ~/.dsh-vibe-learning
   presentTimeoutMs: 3600000   # in-band present 最长等待
 ```
 
-## 已验证
-
-- `pnpm run typecheck`（宿主 + 客户端）零错误；`pnpm run build` 出 `lib/`（宿主）与 `lib/client.js`（客户端 bundle）。
-- `scripts/smoke.mjs` 端到端：run 创建/恢复/重新作答、descriptor 解析、bridge 真实执行（相对 `./submit` + 纯 payload body）、只读预览拒绝提交、不透明 JSON 提交（含 null payload）、同 run 并发幂等提交、run-aware get_result、present 对已落盘 result 立即解除挂起、save_feedback（归属/无 result 拒绝/覆盖）、复习计划 source 校验与幂等、state API run 历史。
-
 ## 已知限制（POC）
 
-- GUI in-band「新开会话」为实验路径（直接 `ctx.agents.create`，未走 preset 组合）。
+- GUI in-band“新开会话”为实验路径（直接 `ctx.agents.create`，未走 preset 组合）。
 - 复习到期为被动提醒（每轮快照 + GUI）；无后台定时推送。
 - 大纲并发编辑无 CAS（tmp+rename 原子写，last-wins）。
-- 客户端 UI 需并入自定义 shell 构建后才可见（官方 web shell 不含第三方客户端包）。
+- 客户端 UI 需并入自定义 shell 构建后才可见（官方 Web Shell 不含第三方客户端包）。

@@ -5,7 +5,6 @@ import clsx from 'clsx'
 import {Button, IconChevronDownOutline14, Modal} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {NotesCardProps} from './contract.ts'
 import type {Note, NoteAccess} from '../shared/model.ts'
-// @ts-ignore。依旧抽风idea
 import css from './NotesCard.module.css'
 
 // 笔记权限选项顺序，private 放最后

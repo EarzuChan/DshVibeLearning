@@ -1,6 +1,4 @@
 import {z} from 'zod'
-import '@deepseek-ai/dsh-session-projection'
-import '@deepseek-ai/dsh-session-projection/types'
 import type {SessionEvent} from '@deepseek-ai/dsh-session'
 import type {DvlLearningProjection} from '../shared/projection.ts'
 import {isLearningEntered, learningEnteredAt} from './learning-event.ts'

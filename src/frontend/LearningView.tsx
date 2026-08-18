@@ -7,7 +7,6 @@ import type {LearningViewProps} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
 import type {ArtifactDto, CardDto, LearningStateDto, OutlineDto} from '../shared/api.ts'
 import type {LessonState, OutlineNode} from '../shared/model.ts'
-// @ts-ignore。依旧抽风idea
 import css from './LearningView.module.css'
 
 // 课程状态对应的标签键
@@ -42,7 +41,6 @@ function flattenNodes(nodes: readonly OutlineNode[]): {node: OutlineNode; depth:
 
 // 行组件共享的只读操作接口
 interface ViewFace {
-    // @ts-ignore。依旧抽风idea
     t: LearningViewProps['t']
     openArtifact: (category: ArtifactCategory, hash: string) => void
     onPreview: (category: ArtifactCategory, hash: string) => void

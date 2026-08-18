@@ -1,19 +1,12 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2023"],
-    "strict": true,
-    "skipLibCheck": true,
     "declaration": true,
-    "rootDir": "src",
     "outDir": "lib",
-    "types": ["node"],
-    "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true,
-    "isolatedModules": true,
-    "noEmitOnError": true
+    "types": ["node"]
   },
   "include": ["src/index.ts", "src/shared", "src/core", "src/tool", "src/cmd", "src/skill", "src/artifact-host"]
 }

@@ -2,19 +2,15 @@
 
 import type {ClientContext, SessionId} from '@deepseek-ai/dsh-client-runtime/client'
 import {createSnapshotStore, type SnapshotStore} from '@deepseek-ai/dsh-client-runtime/client'
-import '@deepseek-ai/dsh-client-locale/client' // 仅用于合并 ctx.locale 的 Context 类型
-import '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于合并 conversation.view、header utilities 等 SlotMap 类型
+import type {} from '@deepseek-ai/dsh-client-locale/client' // 仅用于合并 ctx.locale 的 Context 类型
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于合并 conversation.view、header utilities 等 SlotMap 类型
 import type {BoundActions} from '@deepseek-ai/dsh-client-ui-slots'
 import {artifactUrl, buildNotesActions, fetchNotes, fetchState, inbandPresent, resolveDescriptor} from './api.ts'
 import type {LearningApi, LearningViewInject, NotesActions, NotesCardInject, PresentToolViewInject} from './contract.ts'
-// @ts-ignore：傻逼IDEA
 import {LearningView} from './LearningView.tsx'
 import {en, NS, zh} from './locales.ts'
-// @ts-ignore：傻逼IDEA
 import {NotesCard} from './NotesCard.tsx'
-// @ts-ignore：傻逼IDEA
 import {OutlineCard} from './OutlineCard.tsx'
-// @ts-ignore：傻逼IDEA
 import {PresentArtifactToolView} from './PresentArtifactToolView.tsx'
 import {createDvlViewStore, idleLearningDomain, idleNotesDomain} from './stores.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'

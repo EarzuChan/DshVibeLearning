@@ -1,3 +1,5 @@
+// FUCK：我很几把讨厌没用的测试，刻舟求剑。未来看看要不要删了
+
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
