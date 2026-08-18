@@ -1,18 +1,16 @@
 /**
- * dsh-vibe-learning（DVL）：DeepSeek Harness 的第三方学习处境插件。
+ * dsh-vibe-learning（DVL）：DeepSeek Harness 的第三方氛围学习插件。
  * 其包含核心服务、一系列会话工具、`/learn` 命令一套、课程创作 Skill 以及挂在 DSH webServer 上的学习工件路由。
  * @module dsh-vibe-learning
  */
 
 import { Context } from '@deepseek-ai/cordis'
-import LearningService from './learning/index.ts'
-// TODO：learning包应该改名叫core
-import type { Config as LearningConfig } from './learning/index.ts'
-// TODO：他妈的，下面这几个包里的`-learning`都应该去掉
-import { installToolBoot } from './tool-learning/index.ts'
-import { installLearnCommand } from './command-learning/index.ts'
-import { installCourseAuthoringSkill } from './skill-learning/index.ts'
-import { installLearningRoutes } from './web/index.ts'
+import LearningService from './core/index.ts'
+import type {Config as LearningConfig} from './core/index.ts'
+import {installToolBoot} from './tool/index.ts'
+import {installLearnCommand} from './cmd/index.ts'
+import {installCourseAuthoringSkill} from './skill/index.ts'
+import {installLearningRoutes} from './artifact-host/index.ts'
 
 // 插件显示名称，也是诊断中的"光纤"名称
 export const name = 'dsh-vibe-learning'

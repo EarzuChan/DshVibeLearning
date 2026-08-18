@@ -4,6 +4,8 @@
 
 源码系独立仓库、单独发布；只以 peerDependency 依赖 `@deepseek-ai/dsh-*`。
 
+# 最高指示：以下文档未修订，未必对，可以不看
+
 ## 加载
 
 ```sh
@@ -12,16 +14,17 @@ dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
 
 ## 组成
 
-单包单入口 `src/index.ts`，内部分六块（都在本包内，无需拆行）：
+单包单入口 `src/index.ts`，内部按七类职责组织：
 
 | 块 | 职责 |
 |---|---|
-| `learning/` | `ctx.learning` 核心服务：工作区文件域、全局笔记、FSRS（ts-fsrs）、run 生命周期、canonical descriptor 注册表、进入标记（借用官方 `feedback/record`）、P0/P1/P2 prompt |
-| `tool-learning/` | 10 个模型工具，按学习会话挂到 agent 作用域（非学习会话零工具） |
-| `command-learning/` | `/learn` 命令族 |
-| `skill-learning/` | `course-authoring` skill（catalog 描述 + 内联正文；`skill/course-authoring.md` 为同文源稿） |
-| `web/` | 工件 HTTP 服务器（127.0.0.1，端口 config 默认 4182）：只读预览 URL、canonical run URL、主题 + `window.DVL.submit` 桥注入、run-scoped 不透明 submit 端点、descriptor 解析、GUI JSON API |
-| `client/` | 浏览器半：学习 tab、悬浮卡、`present_artifact` keyed toolview |
+| `core/` | `ctx.learning` 核心服务：工作区文件域、全局笔记、FSRS、run 生命周期、会话进入标记与 Prompt |
+| `tool/` | 模型工具适配层 |
+| `cmd/` | `/learn` 命令适配层 |
+| `skill/` | `course-authoring` Skill 适配层 |
+| `artifact-host/` | 挂靠 DSH webServer 的学习工件托管、提交端点与 frontend HTTP API |
+| `frontend/` | 浏览器端学习界面、悬浮卡与工具视图 |
+| `shared/` | 宿主与 frontend 共用的模型、HTTP 契约、projection 线缆类型及纯常量 |
 
 ## 工件与 Run
 
@@ -63,7 +66,7 @@ dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
 
 ## 命令
 
-- `/learn` —— 进入学习处境（单向阀，一次性；模型回应并开始共建大纲）
+- `/learn` —— 进入氛围学习（单向阀，一次性；模型回应并开始共建大纲）
 - `/learn <outline-id>` —— 进入并激活指定纲目（模型调 `activate_outline` 后回应）
 - `/learn review <lesson-id>` —— 强制复习（不建卡；模型生成 review 工件走作答后固定流程）
 - `/learn quiz <lesson-id> [要求]` —— 小测（作答后固定流程）
@@ -83,9 +86,9 @@ dsh --profile web --patch /path/to/DshVibeLearning/cordis.web.yml # --port 3090
 - **P1 全量规范**（学习会话）：状态机、作答后的固定流程（present → result → 判阅 → save_feedback → 按需 update_review_plan → 回复用户）、工件三类与路径约定、不透明 result/feedback、显式复习计划、笔记模型面、工具纪律。
 - **P2 每轮快照**（`agent/pre-step` durable 消息）：激活纲目、当前课（学习中/答疑中）、到期复习清单。
 
-## 客户端 UI（`src/client/`）
+## 客户端 UI（`src/frontend/`）
 
-学习 tab（纲目们/复习们/小测们，含每工件 run 历史）、对话页两个悬浮卡（当前纲目卡、笔记卡）、`present_artifact` keyed toolview（running 展开 iframe、settled 自动收起并可回看）。数据直连 `/learning/api/state` 等本地端点。入口 `src/client/index.ts` 以 `inject` + `apply` 形式注册 `conversation.view`、`conversation.session.header.utilities` 与 `tool.call.toolview`（key `present_artifact`），共享一个 store handle（每会话一实例）；`dsh.client` manifest（`platform: 'web'`）已在 package.json 声明，`inject` 含 `@deepseek-ai/dsh-client-ui-tool`。
+学习 tab（纲目们/复习们/小测们，含每工件 run 历史）、对话页两个悬浮卡（当前纲目卡、笔记卡）、`present_artifact` keyed toolview（running 展开 iframe、settled 自动收起并可回看）。数据直连 `/learning/api/state` 等本地端点。入口 `src/frontend/index.ts` 以 `inject` + `apply` 形式注册 `conversation.view`、`conversation.session.header.utilities` 与 `tool.call.toolview`（key `present_artifact`），共享一个 store handle（每会话一实例）；`dsh.client` manifest（`platform: 'web'`）已在 package.json 声明，`inject` 含 `@deepseek-ai/dsh-client-ui-tool`。
 
 **官方 Web shell 不含第三方客户端包**：并入需在你的自定义 shell 的 bundle patch 里加 `dsh.client` 行并重建（官方主仓库不动）。
 

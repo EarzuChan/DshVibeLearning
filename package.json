@@ -5,10 +5,10 @@
   "type": "module",
   "description": "Vibe Learning (DVL) — 一个 DeepSeek Harness 的第三方学习插件",
   "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "types": "lib/index.d.ts",
   "exports": {
     ".": {
-      "types": "./lib/types/index.d.ts",
+      "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
     "./client": {

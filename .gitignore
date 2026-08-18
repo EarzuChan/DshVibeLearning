@@ -8,4 +8,4 @@ pnpm-debug.log
 tmp/
 .vscode/
 .DS_Store
-.idea
+.idea/

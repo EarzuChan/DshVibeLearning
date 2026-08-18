@@ -16,5 +16,5 @@
     "isolatedModules": true,
     "noEmitOnError": true
   },
-  "include": ["src/client", "src/shared/routes.ts"]
+  "include": ["src/frontend", "src/shared/routes.ts"]
 }

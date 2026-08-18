@@ -15,5 +15,5 @@
     "isolatedModules": true,
     "noEmitOnError": true
   },
-  "include": ["src/index.ts", "src/shared", "src/learning", "src/tool-learning", "src/command-learning", "src/skill-learning", "src/web"]
+  "include": ["src/index.ts", "src/shared", "src/core", "src/tool", "src/cmd", "src/skill", "src/artifact-host"]
 }
