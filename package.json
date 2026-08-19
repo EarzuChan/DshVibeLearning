@@ -1,10 +1,12 @@
 {
   "name": "dsh-vibe-learning",
-  "version": "0.2.0",
+  "version": "0.3.0",
+  "description": "Vibe Learning，DeepSeek Harness 的一款氛围学习插件",
+
   "type": "module",
-  "description": "Vibe Learning，DeepSeek Harness 氛围学习插件",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+
   "exports": {
     ".": {
       "types": "./lib/index.d.ts",
@@ -15,10 +17,12 @@
     },
     "./package.json": "./package.json"
   },
+
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p src/frontend/tsconfig.json && tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p src/frontend/tsconfig.json --noEmit"
   },
+
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
     "clsx": "^2.1.1",
@@ -68,6 +72,7 @@
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3"
   },
+
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -82,7 +87,8 @@
       ]
     }
   },
-    "files": [
+
+  "files": [
     "lib",
     "cordis.patch.yml",
     "README.md"

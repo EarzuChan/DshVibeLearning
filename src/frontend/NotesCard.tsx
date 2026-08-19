@@ -20,7 +20,7 @@ interface EditorDraft {
   access: NoteAccess
 }
 
-// 渲染可折叠的笔记卡片
+// TIPS：常驻展现。渲染可折叠的笔记卡片
 export function NotesCard({useNotes, card, t}: NotesCardProps) {
   const notesDomain = useNotes(s => s.notes)
   const notes = notesDomain.notes

@@ -1,12 +1,23 @@
 {
   "extends": "./tsconfig.base.json",
+
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2023"],
+
     "declaration": true,
     "outDir": "lib",
     "types": ["node"]
   },
-  "include": ["src/index.ts", "src/shared", "src/core", "src/tool", "src/cmd", "src/skill", "src/artifact-host"]
+
+  "include": [
+    "src/index.ts",
+    "src/shared",
+    "src/core",
+    "src/tool",
+    "src/command",
+    "src/skill",
+    "src/the-so-called-backend"
+  ]
 }

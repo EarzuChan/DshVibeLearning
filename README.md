@@ -1,6 +1,6 @@
-# dsh-vibe-learning — Vibe Learning (DVL)
+# Vibe Learning Plugin for DeepSeek Harness
 
-一个 DeepSeek Harness 的氛围学习插件：在会话中开启氛围学习，让 Agent 能与用户共建多层大纲、交互式上课与课后答疑、安排 FSRS 复习计划、创建小测，以及允许用户在DSH内直接记笔记。
+DeepSeek Harness（DSH）的一款氛围学习插件：用户在会话开启氛围学习后，Agent 能与用户共建多层大纲、交互式上课与课后答疑、安排 FSRS 复习计划、创建小测；用户还能在 DSH 内直接记笔记。
 
 # 最高指示：以下文档未修订，未必对，可以不看
 
@@ -39,7 +39,6 @@ dsh web # 默认实例持久生效
 
 ```
 .dsh/learning/                          # 目录存在 = 学习工作区（无 manifest）
-  active.json                           # 当前激活纲目 id（只由用户命令改）
   outlines/<outlineId>.json             # 纲目树 + 每课状态（未开始/学习中/答疑中/完成）
   lessons/<hash>/index.html             # 课程工件（只含 index.html + meta.json）
   lessons/<hash>/runs/<runId>/          # run.json + result.json + feedback.json
@@ -72,6 +71,7 @@ dsh web # 默认实例持久生效
 ## 命令
 
 - `/learn` —— 进入氛围学习（单向阀，一次性；模型回应并开始共建大纲）
+- 当前激活纲目是会话事件 `dvl://learning/change-outline:<outlineId|null>` 的投影值，不属于工作区文件；同一工作区的多个会话可以有不同激活纲目。
 
 ## 工具（模型面，10 个）
 

@@ -1,5 +1,3 @@
-// 仅在学习会话中挂载到对应 Agent 的作用域 `agent.ctx`，非学习会话不泄露这些工具。写入类工具会在工具内部通过 userQuestions 请求确认，无需模型预先询问
-
 import type {Context} from '@deepseek-ai/cordis'
 import type {Agent} from '@deepseek-ai/dsh-agent'
 import type {ContentBlock} from '@deepseek-ai/dsh-llm'
@@ -7,14 +5,13 @@ import {defineTool} from '@deepseek-ai/dsh-tools'
 import type {GenericCallView} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type {LearningService} from '../core/index.ts'
-import {isLearningEntered} from '../core/learning-event.ts'
-import {workspaceIdOf} from '../core/identifiers.ts'
+import {LEARNING_ARTIFACT_PATH} from '../core/files.ts'
 import type {JsonValue} from '@deepseek-ai/dsh-session'
 import type {ArtifactKind} from '../shared/artifacts.ts'
 import type {PresentArtifactDescriptor} from '../shared/api.ts'
 import type {OutlineNode, ReviewRating} from '../shared/model.ts'
 
-// ── 工具返回值类型，必须与各工具的 output schema 完全一致 ──
+// 工具返回值类型。必须与各工具的 output schema 完全一致
 
 export type PresentValue = {readonly kind: 'result', readonly hash: string, readonly run_id: string, readonly url: string, readonly result: JsonValue, readonly presentation: JsonValue} | {readonly kind: 'no-result', readonly reason: 'interrupted' | 'timeout' | 'error', readonly detail?: string, readonly hash: string, readonly run_id?: string, readonly url?: string, readonly presentation?: JsonValue}
 export type GetResultValue = {readonly kind: 'none'} | {readonly kind: 'result', readonly run_id: string, readonly hash: string, readonly result: JsonValue}
@@ -51,14 +48,14 @@ const FREE_JSON = {type: 'json'} as const // 不受约束且无损的 JSON，可
 const RATING_SCHEMA = {type: 'string', required: true, enum: ['again', 'hard', 'good', 'easy']} as const
 
 // 在一个精确的 Agent 作用域里注册十个 DVL 工具
-export function registerLearningTools(rootCtx: Context, toolCtx: Context, agent: Agent): () => void {
+export function installLearningTools(rootCtx: Context, toolCtx: Context, agent: Agent): () => void {
     const learning: LearningService = rootCtx.learning
     const disposers: Array<() => void> = []
 
     // ── present_artifact 工具 ──
     disposers.push(toolCtx.tools.register(defineTool({
         name: 'present_artifact',
-        description: 'Present one authored artifact (lesson/review/quiz WebApp) to the user and wait for their submission. The artifact HTML must already exist at the conventional path `<workspace>/.dsh/learning/<lessons|reviews|quizzes>/<hash>/index.html`. This creates (or, on retry of the same call, resumes) a run and returns its canonical URL + run id. The call suspends until the user submits (returns the result envelope with the raw payload), or aborts/times out (returns no-result: afterwards call get_result with run_id, or ask the user whether they finished). For kind=lesson this starts the course (state becomes 学习中). No review card or FSRS state is ever created or advanced here.',
+        description: `Present one authored artifact (lesson/review/quiz WebApp) to the user and wait for their submission. The artifact HTML must already exist at the conventional path <workspace>/${LEARNING_ARTIFACT_PATH}. This creates (or, on retry of the same call, resumes) a run and returns its canonical URL + run id. The call suspends until the user submits (returns the result envelope with the raw payload), or aborts/times out (returns no-result: afterwards call get_result with run_id, or ask the user whether they finished). For kind=lesson this starts the course (state becomes 学习中). No review card or FSRS state is ever created or advanced here.`,
         parameters: {
             kind: {...KIND_SCHEMA, description: 'Artifact kind.'},
             target_id: {type: 'string', required: true, description: 'Lesson id this artifact belongs to.'},
@@ -247,7 +244,7 @@ export function registerLearningTools(rootCtx: Context, toolCtx: Context, agent:
     // ── activate_outline 工具 ──
     disposers.push(toolCtx.tools.register(defineTool({
         name: 'activate_outline',
-        description: 'Switch the workspace-active outline pointer. Only called when the user explicitly requested it via the /learn <outline-id> command flow.',
+        description: 'Switch this session-active outline. Call it only after the user clearly chooses or switches an outline and you have confirmed it exists.',
         parameters: {outline_id: {type: 'string', required: true, description: 'Outline id to activate.'}},
         output: {
             schema: {oneOf: [{type: 'object', additionalProperties: false, properties: {outcome: {type: 'string', required: true, const: 'activated'}, outline_id: {type: 'string', required: true}}}, {type: 'object', additionalProperties: false, properties: {outcome: {type: 'string', required: true, const: 'error'}, detail: {type: 'string', required: true}}}]},
@@ -255,10 +252,9 @@ export function registerLearningTools(rootCtx: Context, toolCtx: Context, agent:
         },
         async execute(args: {outline_id: string}, exec): Promise<ActivateValue> {
             requireOwner(exec, agent)
-            const cwd = requireCwd(agent)
 
             try {
-                await learning.activate(cwd, args.outline_id)
+                await learning.changeCurrentSessionOutline(agent, args.outline_id)
                 return {outcome: 'activated', outline_id: args.outline_id}
             } catch (error: unknown) {
                 return {outcome: 'error', detail: error instanceof Error ? error.message : String(error)}
@@ -340,54 +336,15 @@ export function registerLearningTools(rootCtx: Context, toolCtx: Context, agent:
     return () => { for (const dispose of disposers.reverse()) dispose() }
 }
 
+// ---
+
 // 获取调用方 Agent 的工作区 cwd，不存在时直接报错。这个可没判断说这是不是一个学习工作区，它只约束**要有工作区**
 function requireCwd(agent: Agent): string {
     const cwd = agent.session.header.cwd
-    if (cwd === undefined) throw new Error('dvl tools require a session workspace (no cwd on this session)')
+    if (cwd === undefined) throw new Error('欲挂工具，CWD须具')
 
     return cwd
 }
 
-// 严格校验 Agent，已挂载的工具只为氛围学习下的 Agent 服务
-function requireOwner(exec: {agent?: Agent}, agent: Agent): void { if (exec.agent !== agent) throw new Error('dvl tool called for a foreign agent') }
-
-// ---------
-
-// 每个实时 Agent 只启动一次学习会话工具
-function boot(ctx: Context, agent: Agent, booted: WeakSet<Agent>): void {
-    if (booted.has(agent)) return
-    if (!ctx.learning.hasEntered(agent.session.events)) return
-
-    booted.add(agent)
-    agent.ctx.effect(() => registerLearningTools(ctx, agent.ctx, agent), 'dvl.tools()')
-}
-
-// 调教：看看该不该引导起来这一块
-async function reconcile(ctx: Context, agent: Agent, booted: WeakSet<Agent>): Promise<void> {
-    const shouldBoot = await ctx.learning.reconcile(agent)
-    if (shouldBoot) boot(ctx, agent, booted)
-}
-
-// 再有这个新的 Agent，或者是 Agent 进入这氛围学习的时候，那给他调教一下
-export function installToolBoot(ctx: Context): void {
-    const booted = new WeakSet<Agent>()
-
-    const reconcileAgent = (agent: Agent): void => {
-        if (!ctx.agents.roots().includes(agent)) return // 已经调教过
-        void reconcile(ctx, agent, booted).catch(error => { ctx.logger.warn(`DVL：调教失败（${String(agent.id)}）：${String(error)}`) })
-    }
-
-    ctx.effect(() => {
-        const stopCreated = ctx.on('agent/created', ({agent}) => reconcileAgent(agent))
-        const stopEvent = ctx.on('session/event', (session, event) => {
-            if (!isLearningEntered(event)) return // 不是进入标记事件，那连调教都懒得了
-            const agent = ctx.agents.get(session.id)
-            if (agent !== undefined) reconcileAgent(agent)
-        })
-
-        return () => {
-            stopCreated()
-            stopEvent()
-        }
-    }, 'dvl.boot()')
-}
+// 严格校验 Agent，已挂载的工具只为进入氛围学习的 Agent 服务
+function requireOwner(exec: {agent?: Agent}, agent: Agent): void { if (exec.agent !== agent) throw new Error('汝欲用器，须处学习') }

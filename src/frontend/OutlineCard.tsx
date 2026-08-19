@@ -38,16 +38,23 @@ export function OutlineCard({useLearning, useProjection, t}: OutlineCardProps) {
   const projection = useProjection('dvlLearning')
   const [expanded, setExpanded] = useState(false)
 
-  const active = useMemo(() => {
+  // 活跃纲目：反应式派生而来
+  const activeOutline = useMemo(() => {
     const state = learning.state
+
     if (state === null) return null
+    if (projection?.entered !== true) return null
 
-    const outline = state.outlines.find(o => o.id === state.activeOutlineId) ?? state.outlines.find(o => o.active) ?? null
+    const outline = projection === undefined ? null : state.outlines.find(o => o.id === projection.activeOutlineId) ?? null
+
+    // TIPS：activeOutlineId 由投影即时更新；但新建的大纲的数据列表仍依赖 /state 刷新。如模型先 update 再 activate，激活指针立刻能变，但怕大纲详情尚未进入前端 learningSource
+
     if (outline === null) return null
-    return {outline, lessons: lessonNodes(outline.nodes)}
-  }, [learning.state])
 
-  // 非学习会话整体不渲染
+    return {outline, lessons: lessonNodes(outline.nodes)}
+  }, [learning.state, projection])
+
+  // 未进入学习：不渲染
   if (projection?.entered !== true) return null
 
   return (
@@ -59,9 +66,9 @@ export function OutlineCard({useLearning, useProjection, t}: OutlineCardProps) {
 
         {expanded && (
             <div className={css.body}>
-              {learning.phase === 'error' ? <div className={css.empty}>{t('state.error')}</div> : learning.phase !== 'ready' ? <div className={css.empty}>{t('state.loading')}</div> : active === null ? <div className={css.empty}>{t('card.outline.empty')}</div> : (
+              {learning.phase === 'error' ? <div className={css.empty}>{t('state.error')}</div> : learning.phase !== 'ready' ? <div className={css.empty}>{t('state.loading')}</div> : activeOutline === null ? <div className={css.empty}>{t('card.outline.empty')}</div> : (
                   <ul className={css.list}>
-                    {active.lessons.map(lesson => {
+                    {activeOutline.lessons.map(lesson => {
                       const current = lesson.state === 'learning' || lesson.state === 'qa'
                       return (
                           <li key={lesson.id} className={clsx(css.lesson, current && css.lessonCurrent)}>

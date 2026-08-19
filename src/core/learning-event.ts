@@ -1,32 +1,43 @@
-// 氛围学习进入标记的唯一真源：借用官方 `feedback/record` 事件（text 带本包命名空间前缀）
-// 作为本会话「真正进入过氛围学习」的单向阀——官方事件保证不入模型上下文/派生历史、且在加载白名单内，重开会话不再拒载
-// 只有真正的进入入口（/learn、/learn <outline-id>、学习面板新开会话）才会写下它，eview/quiz 子命令只是查询/复习指令，永远不写，故标记语义天然精确
+// 氛围学习会话事件的唯一事件入口：事件构造与追加只允许发生在本文件，外部不得直接触碰官方 feedback/record 载荷
 
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type {Session, SessionEvent} from '@deepseek-ai/dsh-session'
 
-// 类型合并：让 `session.append('feedback/record', …)` 与事件判定在编译期可见
+// 借用官方'feedback/record'事件来当我们的事件载体
 declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    'feedback/record': { text: string } // 本包进入标记借用的官方事件：仅占用 text 字段，语义见 dvl/core/learning-event
-  }
+    interface SessionEventMap {
+        'feedback/record': { text: string }
+    }
 }
 
-// 进入标记的 text 前缀（`@` 后为进入时间戳），本包内检测一律以此为准
-export const LEARNING_ENTERED_PREFIX = 'dvl://learning/entered'
+const DVL_EVENT_PREFIX = 'dvl://learning'
 
-// 事件是否为氛围学习进入标记（类型守卫：通过后事件收窄为 feedback/record）
-export function isLearningEntered(event: SessionEvent): event is SessionEvent<'feedback/record'> {
-  return event.type === 'feedback/record'
-    && typeof event.data.text === 'string'
-    && event.data.text.startsWith(LEARNING_ENTERED_PREFIX)
+// ---入---
+
+const LEARNING_ENTERED_TEXT = `${DVL_EVENT_PREFIX}/entered`
+
+// 记录当前会话进入氛围学习
+export function recordLearningEnteredToSession(session: Session): void {
+    session.append('feedback/record', {text: LEARNING_ENTERED_TEXT})
 }
 
-// 构造进入标记的 text 载荷
-export function learningEnteredText(at: string): string {
-  return `${LEARNING_ENTERED_PREFIX}@${at}`
+// 事件是否为氛围学习进入标记
+export function isLearningEntered(event: SessionEvent): boolean {
+    return event.type === 'feedback/record' && event.data.text === LEARNING_ENTERED_TEXT
 }
 
-// 从标记 text 解出进入时间戳，无 `@` 时间戳时返回 null
-export function learningEnteredAt(text: string): string | null {
-  return text.startsWith(`${LEARNING_ENTERED_PREFIX}@`) ? text.slice(LEARNING_ENTERED_PREFIX.length + 1) : null
+// ---纲---
+
+const CHANGE_OUTLINE_PREFIX = `${DVL_EVENT_PREFIX}/change-outline:`
+
+// 记录当前会话激活纲目的切换。null 表示明确没有激活纲目
+export function recordLearningOutlineChangeToSession(session: Session, outlineId: string | null): void {
+    session.append('feedback/record', {text: `${CHANGE_OUTLINE_PREFIX}${outlineId ?? 'null'}`})
+}
+
+// 从事件中解析当前会话激活纲目
+export function parseLearningChangeOutline(event: SessionEvent): string | null | undefined {
+    if (event.type !== 'feedback/record' || !event.data.text.startsWith(CHANGE_OUTLINE_PREFIX)) return undefined // 非我事件
+
+    const value = event.data.text.slice(CHANGE_OUTLINE_PREFIX.length)
+    return value === 'null' ? null : value
 }

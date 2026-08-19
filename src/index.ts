@@ -1,44 +1,32 @@
-/**
- * dsh-vibe-learning（DVL）：DeepSeek Harness 的第三方氛围学习插件。
- * 其包含核心服务、一系列会话工具、`/learn` 命令一套、课程创作 Skill 以及挂在 DSH webServer 上的学习工件路由。
- * @module dsh-vibe-learning
- */
-
-import type { Context } from '@deepseek-ai/cordis'
+import type {Context} from '@deepseek-ai/cordis'
 import LearningService from './core/index.ts'
 import type {Config as LearningConfig} from './core/index.ts'
-import {installToolBoot} from './tool/index.ts'
-import {installLearnCommand} from './cmd/index.ts'
+import {installLearnCommand} from './command/index.ts'
 import {installCourseAuthoringSkill} from './skill/index.ts'
-import {installLearningRoutes} from './artifact-host/index.ts'
+import {installLearningRoutes} from './the-so-called-backend/index.ts'
 
-// 插件显示名称，也是诊断中的"光纤"名称
+// 插件显示名称，也是诊断中的「光纤」名称
 export const name = 'dsh-vibe-learning'
 
-/**
- * External services the whole plugin consumes. `learning` is deliberately absent:
- * this plugin itself mounts it, so listing it would deadlock the loader's inject wait.
- */
+// 插件依赖的外部服务，**不包含由插件自身挂载的 learning**
 export const inject = ['commands', 'skills', 'tools', 'userQuestions', 'agents', 'webServer']
 
-/** Plugin config schema (validated + defaulted by the loader). */
+// 由加载器校验并补默认值的插件配置。zod
 export const Config = LearningService.Config
 
-/**
- * Compose the DVL surface. The learning service mounts first; everything else runs inside a scope that additionally waits for `ctx.learning`,
- * so the property is ready before any consumer reads it.
- * @param ctx - plugin context.
- * @param config - validated plugin config.
- */
+// 组装 DVL 插件能力，先挂载 LearningService，再让其余消费者等待 learning 就绪。后端的 Cordis，前端的见 frontend/ 下
 export function apply(ctx: Context, config?: LearningConfig): void {
+  // 会话、工作区的“处理”，在插件服务里负责
   ctx.plugin(LearningService, config ?? {})
 
+  // 下面算是离体可用的，THINKING：为什么不在插件服务内拨弄？
+
+  // 挂载命令和Skill
   ctx.inject(['learning', 'commands', 'skills', 'tools', 'userQuestions', 'agents'], (scope: Context) => {
-    installToolBoot(scope)
     installLearnCommand(scope)
     installCourseAuthoringSkill(scope)
   })
 
-  // 学习工件路由：挂在 DSH webServer 的 /learning 前缀（同源，无独立端口）
+  // 挂载工件路由
   ctx.inject(['learning', 'webServer'], (scope: Context) => installLearningRoutes(scope))
 }

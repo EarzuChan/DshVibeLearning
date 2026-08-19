@@ -17,7 +17,6 @@ export interface PresentArtifactDescriptor {
 
 // 学习状态响应中的单个纲目
 export interface OutlineDto extends Pick<Outline, 'id' | 'title' | 'createdAt' | 'updatedAt'> {
-  readonly active: boolean
   readonly nodeCount: number
   readonly nodes: readonly OutlineNode[]
 }
@@ -47,13 +46,18 @@ export interface LearningStateDto {
   readonly workspaceId: string
   readonly cwd: string
   readonly learningDirExists: boolean
-  readonly activeOutlineId: string | null
   readonly outlines: readonly OutlineDto[]
   readonly cards: readonly CardDto[]
   readonly lessons: readonly ArtifactDto[]
   readonly reviews: readonly ArtifactDto[]
   readonly quizzes: readonly ArtifactDto[]
   readonly notes: NotesDto
+}
+
+// 工作区存在性探测接口响应
+export interface LearningWorkspaceDto {
+  readonly cwd: string
+  readonly isLearningWorkspace: boolean
 }
 
 // 带内展示接口请求

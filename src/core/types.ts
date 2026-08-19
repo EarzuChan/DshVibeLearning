@@ -57,7 +57,6 @@ export interface ReviewPlanProposal {
 export interface SnapshotOutline {
   readonly id: string
   readonly title: string
-  readonly active: boolean
 }
 
 // 每轮快照注入的当前课程信息

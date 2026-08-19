@@ -48,23 +48,23 @@ interface ViewFace {
 }
 
 // 渲染纲目子页签
-function OutlinesTab({state, t}: { state: LearningStateDto } & Pick<LearningViewProps, 't'>) {
+function OutlinesTab({state, activeOutlineId, t}: { state: LearningStateDto, activeOutlineId: string | null } & Pick<LearningViewProps, 't'>) {
     const outlines = state.outlines
 
     return (
         <div className={css.section}>
             {outlines.length === 0 && <div className={css.empty}>{t('outlines.empty')}</div>}
-            {outlines.map(outline => <OutlineBlock key={outline.id} outline={outline} t={t}/>)}
+            {outlines.map(outline => <OutlineBlock key={outline.id} outline={outline} active={outline.id === activeOutlineId} t={t}/>)}
         </div>
     )
 }
 
 // 渲染单个纲目标题与可展开节点树
-function OutlineBlock({outline, t}: { outline: OutlineDto } & Pick<LearningViewProps, 't'>) {
-    const [expanded, setExpanded] = useState(outline.active)
+function OutlineBlock({outline, active, t}: { outline: OutlineDto, active: boolean } & Pick<LearningViewProps, 't'>) {
+    const [expanded, setExpanded] = useState(active)
     useEffect(() => {
-        setExpanded(outline.active)
-    }, [outline.active])
+        setExpanded(active)
+    }, [active])
     const rows = useMemo(() => flattenNodes(outline.nodes), [outline.nodes])
 
     return (
@@ -74,7 +74,7 @@ function OutlineBlock({outline, t}: { outline: OutlineDto } & Pick<LearningViewP
             }}>
                 <span className={css.outlineChevron} aria-hidden="true">{expanded ? '▾' : '▸'}</span>
                 <span className={css.outlineTitle}>{outline.title}</span>
-                {outline.active && <span className={css.badge}>{t('outlines.active')}</span>}
+                {active && <span className={css.badge}>{t('outlines.active')}</span>}
                 <span className={css.outlineMeta}>{t('outlines.nodes', {n: outline.nodeCount})}</span>
             </button>
 
@@ -165,11 +165,14 @@ function ArtifactRow({artifact, category, face}: { artifact: ArtifactDto; catego
     )
 }
 
+// CHECL、FIXME：除**CWD首次被探测**外，数据只能被动点击刷新。考虑在后端若学习工作区创建，大纲、复习卡、工件呈现、笔记什么的有变化，就推送刷新UI事件到前台
+
 // 渲染学习视图
 export function LearningView(props: LearningViewProps) {
-    const {api, useLearning, useStore, actions, t, sessionId} = props
+    const {api, useLearning, useProjection, useStore, actions, t, sessionId} = props
     const learning = useLearning(s => s.learning)
     const state = learning.state
+    const projection = useProjection('dvlLearning') ?? {entered: false, activeOutlineId: null}
     const tab = useStore(s => s.tab)
     const preview = useStore(s => s.preview)
     const presentRuns = useStore(s => s.presentRuns)
@@ -235,7 +238,7 @@ export function LearningView(props: LearningViewProps) {
             </header>
 
             <div className={css.body}>
-                {learning.phase === 'error' ? <div className={css.status}>{t('state.error')}</div> : state === null ? <div className={css.status}>{t('state.loading')}</div> : tab === 'outlines' ? <OutlinesTab state={state} t={t}/> : tab === 'reviews' ? <ArtifactsTab kind="reviews" state={state} face={face}/> : <ArtifactsTab kind="quizzes" state={state} face={face}/>}
+                {learning.phase === 'error' ? <div className={css.status}>{t('state.error')}</div> : state === null ? <div className={css.status}>{t('state.loading')}</div> : tab === 'outlines' ? <OutlinesTab state={state} activeOutlineId={projection.activeOutlineId} t={t}/> : tab === 'reviews' ? <ArtifactsTab kind="reviews" state={state} face={face}/> : <ArtifactsTab kind="quizzes" state={state} face={face}/>}
             </div>
 
             {preview !== null && (

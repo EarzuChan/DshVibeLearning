@@ -2,7 +2,7 @@
 
 import type {NotesActions} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {InbandPresentRequest, InbandPresentResult, LearningStateDto, NotesDto, PresentArtifactDescriptor} from '../shared/api.ts'
+import type {InbandPresentRequest, InbandPresentResult, LearningStateDto, LearningWorkspaceDto, NotesDto, PresentArtifactDescriptor} from '../shared/api.ts'
 import {LEARNING_ROUTE_PREFIX} from '../shared/routes.ts'
 
 // 执行 JSON GET/POST 请求，非 2xx 时抛出错误
@@ -19,6 +19,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 // 获取指定工作区 cwd 的完整学习状态
 export function fetchState(cwd: string): Promise<LearningStateDto> { return requestJson<LearningStateDto>(`${LEARNING_ROUTE_PREFIX}/api/state?cwd=${encodeURIComponent(cwd)}`) }
+
+// 仅探测当前 cwd 是否为学习工作区，不读取纲目、工件或卡片
+export function fetchLearningWorkspace(cwd: string): Promise<LearningWorkspaceDto> { return requestJson<LearningWorkspaceDto>(`${LEARNING_ROUTE_PREFIX}/api/workspace?cwd=${encodeURIComponent(cwd)}`) }
 
 // 发起带内展示请求并返回服务端结束结果
 export function inbandPresent(workspaceId: string, category: ArtifactCategory, hash: string, sessionId: string): Promise<InbandPresentResult> {

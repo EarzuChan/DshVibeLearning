@@ -57,7 +57,7 @@ function metaDescriptorOf(block: ToolResultNode): PresentArtifactDescriptor | nu
 const FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups'
 
 // 渲染 present_artifact 工具视图
-export function PresentArtifactToolView(props: PresentToolViewProps) {
+export function InBandPresentArtifactView(props: PresentToolViewProps) {
   const {callId, block, cwd, t, actions, resolveDescriptor} = props
   const settled = 'kind' in block
   const outcome: SettleOutcome | null = settled ? settleOutcomeOf(block) : null

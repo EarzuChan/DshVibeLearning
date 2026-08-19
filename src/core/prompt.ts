@@ -1,5 +1,6 @@
 // DVL prompt 文本：非学习会话使用 P0 启动提示，学习会话使用 P1 完整指南，并由 P2 渲染每轮快照
 
+import {LEARNING_ARTIFACT_PATH, LEARNING_DIR} from './files.ts'
 import type {LearningSnapshot} from './types.ts'
 
 // P0：非学习会话始终可见的单条启动提示
@@ -20,7 +21,7 @@ export const FULL_GUIDE = `你正在一个 DVL 学习会话中担任学习助教
 
 ## 课程工件（三类：lesson / review / quiz）
 - 工件 = 一个自含 HTML 文件（内联 JS/CSS），幻灯片式讲学、可视化、交互演示；确定题在工件内即时判定，主观题收集原文。
-- 存放：写入工作区 \`.dsh/learning/<lessons|reviews|quizzes>/<hash>/index.html\`，其中 <hash> 是工件内容的 sha256 前 16 位 hex（可用 bash: \`shasum -a 256 文件\` 计算；若手写内容可用临时文件计算，或用稳定随机 hex）。
+- 存放：写入工作区 \`${LEARNING_ARTIFACT_PATH}\`，其中 <hash> 是工件内容的 sha256 前 16 位 hex（可用 bash: \`shasum -a 256 文件\` 计算；若手写内容可用临时文件计算，或用稳定随机 hex）。
 - 提交：工件内调用系统注入的 \`window.DVL.submit(anyJsonValue)\`。anyJsonValue 是**不透明 JSON**（任意值）：记录题目与真实作答；有确定答案时附答案/正确情况；带足上下文以便脱离 lesson 判阅。**不要**输出最终分数或任何评分字段——DVL 不规定 result 结构。
 - 复习工件（review）每次到期都要重新生成：按当前掌握情况与历史薄弱点出题，不复用旧工件。
 
@@ -42,19 +43,19 @@ export const FULL_GUIDE = `你正在一个 DVL 学习会话中担任学习助教
 
 ## 工具纪律
 - update_outline、update_note 与 update_review_plan 会自行弹出确认框，返回值是 confirmed / cancelled / error；你不要先问用户、不要替工具弹窗；cancelled 时问清原因再决定。
-- activate_outline 只在用户通过 /learn 指定纲目时调用。
+- activate_outline 只改变当前会话的激活纲目；用户明确选择、切换或放弃纲目且你已确认纲目存在时调用。
 - present_artifact 挂起等用户作答：用户可能离开，返回 no-result 时用 get_result(run_id) 查是否已有 result，或直接问用户是否已完成。同一 run 重复提交是幂等的；明确「重新作答」会让新 run 产生独立 result。
-- 命令：/learn [纲目ID]（用户侧入口）、/learn review <lessonId>、/learn quiz <lessonId> [要求]。`
+- 命令：/learn（唯一用户侧入口，不接受参数）。`
 
-// P2：每一步执行前注入的持久化状态快照 FIXME：这玩意的注入太频繁，应该搞成那种防抖
+// P2：每一步执行前注入的持久化状态快照
 export function renderSnapshot(snapshot: LearningSnapshot): string {
   const lines: string[] = ['[DVL 氛围学习快照]']
 
-  if (!snapshot.learningDirExists) lines.push('- 本工作区尚无学习内容（.dsh/learning 不存在）。')
+  if (!snapshot.learningDirExists) lines.push(`- 本工作区学习目录不可用（${LEARNING_DIR} 不存在）。`)
 
   if (snapshot.activeOutlineId === null) lines.push('- 当前没有激活的纲目。用户想学什么，先共建大纲；完成大纲后用户确认即激活。')
   else {
-    const active = snapshot.outlines.find(outline => outline.active)
+    const active = snapshot.outlines.find(outline => outline.id === snapshot.activeOutlineId)
     lines.push(`- 激活纲目：${active?.title ?? snapshot.activeOutlineId}（id: ${snapshot.activeOutlineId}）`)
   }
 
