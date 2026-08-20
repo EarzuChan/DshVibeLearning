@@ -1,57 +1,103 @@
-import type {ArtifactKind} from './artifacts.ts'
+// DVL 的持久业务模型。业务实体持有工件，工件与 Run 不反向声明归属
 
-// 单个课程节点的学习进度状态
-export type LessonState = 'not-started' | 'learning' | 'qa' | 'done'
+import type {ArtifactHash, ArtifactTarget} from './artifacts.ts'
 
-// 纲目树中的一个节点，group 可嵌套，lesson 为叶子课程
-export interface OutlineNode {
+export type OutlinePhase = 'not-started' | 'learning' | 'qa' | 'completed'
+
+export interface OutlineWorkflow {
+  readonly phase: OutlinePhase
+  readonly currentLessonId: string | null
+  readonly completedLessonIds: readonly string[]
+}
+
+export interface OutlineGroupNode {
   readonly id: string
-  readonly kind: 'group' | 'lesson'
+  readonly kind: 'group'
   readonly title: string
-  readonly order: number
-  readonly parentId: string | null
-  readonly lessonId?: string
-  readonly state?: LessonState
-  readonly artifactHash?: string
+  readonly description?: string
+  readonly children: readonly OutlineNode[]
+}
+
+export interface OutlineLessonNode {
+  readonly id: string
+  readonly kind: 'lesson'
+  readonly title: string
   readonly description?: string
 }
 
-// 持久化纲目文件
+export type OutlineNode = OutlineGroupNode | OutlineLessonNode
+
+export type OutlineArtifactBindings = Readonly<Record<string, string>>
+
 export interface Outline {
   readonly id: string
   readonly title: string
-  readonly createdAt: string
-  readonly updatedAt: string
-  readonly nodes: OutlineNode[]
+  readonly tree: readonly OutlineNode[]
+  readonly artifactBindings: OutlineArtifactBindings
+  readonly workflow: OutlineWorkflow
 }
 
-// 单个工件的元数据
-export interface ArtifactMeta {
-  readonly kind: ArtifactKind
-  readonly targetId: string
-  readonly title: string
-  readonly createdAt: string
+export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
+
+export type FsrsCard = Record<string, unknown>
+
+export interface ReviewPlanRound {
+  readonly id: string
+  readonly state: 'active' | 'completed'
+  readonly startedAt: string
+  readonly completedAt?: string
+  readonly artifactHash?: ArtifactHash
 }
 
-// 工件下展示的一次运行摘要
+export interface ReviewPlan {
+  readonly id: string
+  readonly outlineId: string
+  readonly lessonId: string
+  readonly card: FsrsCard
+  readonly rounds: readonly ReviewPlanRound[]
+}
+
+export interface TemporaryReviewPlanRound {
+  readonly id: string
+  readonly outlineId: string
+  readonly lessonId: string
+  readonly startedAt: string
+  readonly artifactHash?: ArtifactHash
+}
+
+export interface TemporaryReviewPlanRoundManifest {
+  readonly rounds: readonly TemporaryReviewPlanRound[]
+}
+
+export type RunOutcome = {readonly state: 'completed'; readonly payload: unknown} | {readonly state: 'aborted'; readonly reason?: string}
+
+export interface FeedbackEnvelope {
+  readonly payload: unknown
+}
+
 export interface ArtifactRunSummary {
   readonly runId: string
-  readonly createdAt: string
-  readonly hasResult: boolean
+  readonly state: 'active' | 'completed' | 'aborted'
   readonly hasFeedback: boolean
+  readonly modifiedAt: string
+  readonly inBandSessionId?: string
 }
 
-// 笔记访问权限
+export interface ArtifactSummary extends ArtifactTarget {
+  readonly title: string
+  readonly modifiedAt: string
+  readonly runs: readonly ArtifactRunSummary[]
+}
+
+// 笔记仍是插件全局数据，不属于学习工作区文件模型
 export type NoteAccess = 'private' | 'readable' | 'readwrite'
 
-// 笔记文件夹
 export interface NoteFolder {
   readonly id: string
   readonly name: string
   readonly createdAt: string
 }
 
-// 一条全局存储的笔记
 export interface Note {
   readonly id: string
   readonly folderId: string
@@ -63,19 +109,7 @@ export interface Note {
   readonly updatedAt: string
 }
 
-// 笔记数据库
 export interface NotesDb {
-  readonly folders: NoteFolder[]
-  readonly notes: Note[]
-}
-
-// 模型完成一次判阅后明确给出的 FSRS 评级
-export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
-
-// 一次已完成的复习记录
-export interface ReviewRecord {
-  readonly at: string
-  readonly rating: ReviewRating
-  readonly sourceRunId: string
-  readonly reason?: string
+  readonly folders: readonly NoteFolder[]
+  readonly notes: readonly Note[]
 }

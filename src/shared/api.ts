@@ -1,81 +1,59 @@
-import type {ArtifactCategory, ArtifactKind} from './artifacts.ts'
-import type {ArtifactMeta, ArtifactRunSummary, Note, NoteFolder, Outline, OutlineNode, ReviewRecord} from './model.ts'
+import type {ArtifactCategory, ArtifactTarget} from './artifacts.ts'
+import type {ArtifactSummary, Note, NoteFolder, Outline, ReviewPlan, TemporaryReviewPlanRoundManifest} from './model.ts'
 
-// 服务端签发的规范展示描述符
-export interface PresentArtifactDescriptor {
-  readonly version: 1
-  readonly callId: string
+export interface ArtifactRunDescriptor extends ArtifactTarget {
+  readonly version: 2
   readonly workspaceId: string
-  readonly kind: ArtifactKind
-  readonly category: ArtifactCategory
-  readonly hash: string
-  readonly targetId: string
   readonly title: string
   readonly runId: string
   readonly url: string
 }
 
-// 学习状态响应中的单个纲目
-export interface OutlineDto extends Pick<Outline, 'id' | 'title' | 'createdAt' | 'updatedAt'> {
-  readonly nodeCount: number
-  readonly nodes: readonly OutlineNode[]
-}
-
-// 学习状态响应中的单个 FSRS 复习卡片
-export interface CardDto {
-  readonly lessonId: string
-  readonly due: string | null
-  readonly history: readonly ReviewRecord[]
-}
-
-// 学习状态响应中的单个已创作工件
-export interface ArtifactDto {
-  readonly hash: string
-  readonly meta: ArtifactMeta
-  readonly runs: readonly ArtifactRunSummary[]
-}
-
-// 笔记接口响应
 export interface NotesDto {
   readonly folders: readonly NoteFolder[]
   readonly notes: readonly Note[]
 }
 
-// 学习数据接口响应，只包含学习内容，不携带工作区身份与能力
 export interface LearningDataDto {
-  readonly outlines: readonly OutlineDto[]
-  readonly cards: readonly CardDto[]
-  readonly lessons: readonly ArtifactDto[]
-  readonly reviews: readonly ArtifactDto[]
-  readonly quizzes: readonly ArtifactDto[]
+  readonly outlines: readonly Outline[]
+  readonly reviewPlans: readonly ReviewPlan[]
+  readonly temporaryReviews: TemporaryReviewPlanRoundManifest
+  readonly orphanLessonHashes: readonly string[]
+  readonly lessons: readonly ArtifactSummary[]
+  readonly reviews: readonly ArtifactSummary[]
+  readonly quizzes: readonly ArtifactSummary[]
 }
 
-// 数据变更 SSE 中的单条事件
 export interface DataChangeDto {
   readonly id: number
   readonly channel: 'workspace' | 'learning' | 'notes' | 'reset'
   readonly workspaceId?: string
 }
 
-// 工作区存在性探测接口响应
 export interface LearningWorkspaceDto {
   readonly cwd: string
   readonly workspaceId: string
   readonly isLearningWorkspace: boolean
 }
 
-// 带内展示接口请求
-export interface InbandPresentRequest {
-  readonly workspaceId: string
-  readonly category: ArtifactCategory
-  readonly hash: string
-  readonly sessionId: string
-}
+export type InbandPresentRequest = {readonly intent: 'present-existing'; readonly workspaceId: string; readonly category: ArtifactCategory; readonly hash: string; readonly runId?: string; readonly sessionId: string} | {readonly intent: 'start-due-review'; readonly workspaceId: string; readonly planId: string; readonly sessionId: string}
 
-// 带内展示接口响应
 export interface InbandPresentResult {
   readonly ok: boolean
   readonly mode: 'current-session' | 'new-session'
   readonly sessionId: string
   readonly error?: string
 }
+
+export interface DirectRunRequest {
+  readonly workspaceId: string
+  readonly category: ArtifactCategory
+  readonly hash: string
+}
+
+export interface AbortRunRequest extends DirectRunRequest {
+  readonly runId: string
+  readonly reason?: string
+}
+
+export type DeleteLearningEntityRequest = {readonly target: 'outline'; readonly id: string} | {readonly target: 'review-plan'; readonly id: string; readonly preserveArtifacts: boolean} | {readonly target: 'artifact'; readonly category: ArtifactCategory; readonly hash: string}

@@ -2,3 +2,9 @@
 - insert:
     - id: dsh-vibe-learning
       name: dsh-vibe-learning
+
+# 用以打日志，FIXME：现在还没法用，要等修复
+#- insert:
+#    - id: logger-console
+#      name: '@deepseek-ai/cordis-plugin-logger-console'
+#      immediately: true

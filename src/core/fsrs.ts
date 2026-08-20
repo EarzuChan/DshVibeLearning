@@ -3,7 +3,7 @@
 
 import {createEmptyCard, fsrs, generatorParameters, Rating, State} from 'ts-fsrs'
 import type {Card, Grade} from 'ts-fsrs'
-import type {ReviewRating} from '../shared/model.ts'
+import type {FsrsCard, ReviewRating} from '../shared/model.ts'
 
 // 整个插件共用一个无状态调度器
 const scheduler = fsrs(generatorParameters({enable_fuzz: true}))
@@ -11,6 +11,14 @@ const scheduler = fsrs(generatorParameters({enable_fuzz: true}))
 // 为首次进入复习轮转的课程创建新卡片
 export function newCard(): Card {
     return createEmptyCard()
+}
+
+export function cardFromStored(value: FsrsCard): Card {
+    return {...value, due: new Date(String(value.due)), ...(value.last_review === undefined || value.last_review === null ? {} : {last_review: new Date(String(value.last_review))})} as unknown as Card
+}
+
+export function cardToStored(card: Card): FsrsCard {
+    return {...card, due: card.due.toISOString(), ...(card.last_review === undefined || card.last_review === null ? {} : {last_review: card.last_review.toISOString()})}
 }
 
 // 将模型明确给出的复习评级映射为 FSRS grade

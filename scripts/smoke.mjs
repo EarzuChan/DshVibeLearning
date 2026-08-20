@@ -48,12 +48,12 @@ async function expectThrow(label, fn, re) {
 }
 
 // 1．创建与恢复相同 callId 的 run，并用新 callId 重新作答
-const d1 = await service.createOrResumeRun(ws, 'lesson', 'lesson-1', artifactPath, 'call-1', '第一课')
-const d1r = await service.createOrResumeRun(ws, 'lesson', 'lesson-1', artifactPath, 'call-1', '第一课')
-const d2 = await service.createOrResumeRun(ws, 'lesson', 'lesson-1', artifactPath, 'call-2', '第一课')
-const d3 = await service.createOrResumeRun(ws, 'lesson', 'lesson-1', artifactPath, 'call-3', '第一课')
-const d4 = await service.createOrResumeRun(ws, 'lesson', 'lesson-1', artifactPath, 'call-4', '第一课')
-const d5 = await service.createOrResumeRun(ws, 'lesson', 'lesson-1', artifactPath, 'call-5', '第一课')
+const d1 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-1', '第一课')
+const d1r = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-1', '第一课')
+const d2 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-2', '第一课')
+const d3 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-3', '第一课')
+const d4 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-4', '第一课')
+const d5 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-5', '第一课')
 console.log('RUNS:', d1.runId === d1r.runId, d1.runId !== d2.runId, d1.kind, d1.category)
 
 // 2．解析展示描述符

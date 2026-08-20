@@ -1,57 +1,35 @@
-// TIPS，作用：工件架设 + 前端可调的API
+// DVL HTTP：无状态工件页面、Run 终局、前端查询和意图投递
 
-import type {IncomingMessage, ServerResponse} from 'node:http'
 import {randomUUID} from 'node:crypto'
-import type {Context} from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-host-webserver' // 让 webServer 的 Context 声明合并对本文件可见
+import type {IncomingMessage, ServerResponse} from 'node:http'
 import type {Agent} from '@deepseek-ai/dsh-agent'
-import type {SessionId} from '@deepseek-ai/dsh-session'
-import {SessionId as brandSessionId} from '@deepseek-ai/dsh-session'
-import {LEARNING_DIR, isLearningWorkspace, isValidArtifactHash, isValidRunId} from '../core/files.ts'
+import type {Context} from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-host-webserver'
+import {SessionId as brandSessionId, type SessionId} from '@deepseek-ai/dsh-session'
 import type {LearningService} from '../core/index.ts'
 import type {DataChange, DataResetSignal} from '../core/data-change-bus.ts'
+import {isLearningWorkspace, isValidArtifactHash, isValidRunId, LEARNING_DIR} from '../core/files.ts'
 import {generateWorkspaceHashIdOf} from '../core/identifiers.ts'
-import {recordWorkspaceHashIdByGeneratingItFromItsCwd, getWorkspaceCwdOrNullByItsHashId} from './workspace-hash-id-related.ts'
+import {findOutlineLesson, outlineArtifactHashes} from '../core/outline.ts'
 import {artifactKindOf} from '../shared/artifacts.ts'
-import type {CardDto, InbandPresentRequest, LearningDataDto, OutlineDto} from '../shared/api.ts'
+import type {AbortRunRequest, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, LearningDataDto} from '../shared/api.ts'
 import type {NoteAccess} from '../shared/model.ts'
 import {LEARNING_ROUTE_PREFIX} from '../shared/routes.ts'
+import {getWorkspaceCwdOrNullByItsHashId, recordWorkspaceHashIdByGeneratingItFromItsCwd} from './workspace-hash-id-related.ts'
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024
-
 const THEME_CSS = `:root { --dvl-font: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
-body.dvl-artifact { font-family: var(--dvl-font); margin: 0; line-height: 1.6; }
-.dvl-slide { max-width: 860px; margin: 0 auto; padding: 32px 24px; }`
-
-// 只负责提交原始 JSON，运行身份完全取自当前页面 URL
+body.dvl-artifact { font-family: var(--dvl-font); margin: 0; line-height: 1.6; }`
 const BRIDGE_JS = `(function () {
-    function submit(payload) {
-        return fetch("./submit", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify(payload === undefined ? null : payload)
-        }).then(function (r) {
-            return r.json()
-        })
-    }
-
-    window.DVL = {submit: submit}
+    window.DVL = {submit: function (payload) {
+        return fetch("./submit", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload === undefined ? null : payload)}).then(function (response) { return response.json() })
+    }}
 })()`
 
-// 向工件 HTML 注入CSS、JS
-function injectIntoHtml(html: string): string {
-    const injection = `<link rel="stylesheet" href="/learning/theme.css">
-<script src="/learning/bridge.js"></script>`
-
+function injectIntoHtml(html: string, writable: boolean): string {
+    const injection = `<link rel="stylesheet" href="/learning/theme.css">${writable ? '\n<script src="/learning/bridge.js"></script>' : ''}`
     const headClose = /<\/head>/iu.exec(html)
     if (headClose !== null) return `${html.slice(0, headClose.index)}${injection}\n${html.slice(headClose.index)}`
-
-    const bodyOpen = /<body[^>]*>/iu.exec(html)
-    if (bodyOpen !== null) {
-        const at = bodyOpen.index + bodyOpen[0].length
-        return `${html.slice(0, at)}\n${injection}${html.slice(at)}`
-    }
-
     return `${injection}\n${html}`
 }
 
@@ -70,32 +48,23 @@ function readBody(req: IncomingMessage): Promise<unknown> {
     return new Promise((resolve, reject) => {
         const chunks: Buffer[] = []
         let size = 0
-
         req.on('data', (chunk: Buffer) => {
             size += chunk.length
-
             if (size > MAX_BODY_BYTES) {
                 reject(new Error('请求正文过大'))
                 req.destroy()
                 return
             }
-
             chunks.push(chunk)
         })
-
         req.on('end', () => {
-            if (chunks.length === 0) {
-                resolve({})
-                return
-            }
-
+            if (chunks.length === 0) return resolve({})
             try {
                 resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown)
             } catch (error: unknown) {
                 reject(new Error(`JSON 请求正文无效：${error instanceof Error ? error.message : String(error)}`))
             }
         })
-
         req.on('error', reject)
     })
 }
@@ -104,342 +73,200 @@ const asString = (value: unknown): string => typeof value === 'string' ? value :
 const asTags = (value: unknown): string[] => Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
 const asAccess = (value: unknown): NoteAccess => value === 'private' || value === 'readable' || value === 'readwrite' ? value : 'readable'
 
-// ---
-
-// 注册全部 /learning HTTP 路由
 export function installLearningRoutes(ctx: Context): void {
     const learning: LearningService = ctx.learning
+    const resolveCwd = (workspaceId: string): string | null => getWorkspaceCwdOrNullByItsHashId(ctx, workspaceId)
 
-    const resolveCwd = (workspaceId: string): string | null => {
-        return getWorkspaceCwdOrNullByItsHashId(ctx, workspaceId)
+    const deliverIntent = async (cwd: string, requestedSessionId: string, instruction: string): Promise<{mode: 'current-session' | 'new-session'; sessionId: string}> => {
+        const current: Agent | undefined = requestedSessionId.length === 0 ? undefined : ctx.agents.get(brandSessionId(requestedSessionId))
+        if (current !== undefined) {
+            if (learning.getCurrentSessionDvlLearningState(current).entered) learning.notify(current, instruction)
+            else await learning.enterVibeLearning(current, instruction)
+            return {mode: 'current-session', sessionId: requestedSessionId}
+        }
+
+        const created = await ctx.agents.create({sessionId: brandSessionId(randomUUID()) as SessionId, meta: {cwd}})
+        await learning.enterVibeLearning(created.agent, instruction)
+        return {mode: 'new-session', sessionId: String(created.agent.id)}
     }
 
-    // TIPS：最高总伺服
     const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-
-        if (req.method === 'OPTIONS') {
-            sendJson(res, 204, {})
-            return
-        }
-
         const path = url.pathname
 
-        if (req.method === 'GET' && path === '/learning/theme.css') {
-            sendText(res, 200, THEME_CSS, 'text/css; charset=utf-8')
-            return
+        if (req.method === 'OPTIONS') return sendJson(res, 204, {})
+        if (req.method === 'GET' && path === '/learning/theme.css') return sendText(res, 200, THEME_CSS, 'text/css; charset=utf-8')
+        if (req.method === 'GET' && path === '/learning/bridge.js') return sendText(res, 200, BRIDGE_JS, 'application/javascript; charset=utf-8')
+
+        const runAction = /^\/learning\/([a-f0-9]{12})\/(lessons|reviews|quizzes)\/([a-f0-9]{6,64})\/runs\/([a-z0-9_-]{1,128})\/(submit|abort)$/iu.exec(path)
+        if (req.method === 'POST' && runAction !== null) {
+            const cwd = resolveCwd(runAction[1] ?? '')
+            const kind = artifactKindOf(runAction[2])
+            const hash = runAction[3]
+            const runId = runAction[4]
+            if (cwd === null || kind === null || hash === undefined || runId === undefined || !isValidRunId(runId)) return sendJson(res, 404, {outcome: 'error', detail: 'Run 目标无效'})
+            const ref = {cwd, kind, hash, runId}
+            const body = await readBody(req)
+            const outcome = runAction[5] === 'submit' ? {state: 'completed' as const, payload: body} : {state: 'aborted' as const, ...((body as {reason?: unknown}).reason === undefined ? {} : {reason: asString((body as {reason?: unknown}).reason)})}
+            const finished = await learning.finishRun(ref, outcome)
+            return sendJson(res, 200, {outcome: finished.outcome.state, alreadyFinished: finished.alreadyFinished})
         }
 
-        if (req.method === 'GET' && path === '/learning/bridge.js') {
-            sendText(res, 200, BRIDGE_JS, 'application/javascript; charset=utf-8')
-            return
+        if (req.method === 'GET' && path === '/learning/api/present/live') {
+            const cwd = url.searchParams.get('cwd')
+            const callId = url.searchParams.get('callId')
+            if (cwd === null || callId === null) return sendJson(res, 400, {error: '必须提供 cwd 和 callId'})
+            const descriptor = await learning.livePresent(cwd, callId)
+            return descriptor === null ? sendJson(res, 404, {error: '该 Tool Call 当前没有 In-band Present'}) : sendJson(res, 200, descriptor)
         }
 
-        // ---TIPS：伺服提交/API调用---
-
-        // TIPS：接收工件的活动 Run 的不透明提交
-        const submitRunMatch = /^\/learning\/([a-f0-9]{12})\/(lessons|reviews|quizzes)\/([a-f0-9]{6,64})\/runs\/([a-z0-9_-]{1,128})\/submit$/iu.exec(path)
-        if (req.method === 'POST' && submitRunMatch !== null) {
-            const workspaceId = submitRunMatch[1]
-            const kind = artifactKindOf(submitRunMatch[2])
-            const hash = submitRunMatch[3]
-            const runId = submitRunMatch[4]
-
-            if (kind === null || workspaceId === undefined || hash === undefined || runId === undefined || !isValidRunId(runId)) {
-                sendJson(res, 400, {ok: false, error: '运行目标无效'})
-                return
-            }
-
-            const cwd = resolveCwd(workspaceId)
-            if (cwd === null) {
-                sendJson(res, 404, {ok: false, error: '未知的工作区'})
-                return
-            }
-
-            const payload = await readBody(req)
-            const {alreadySubmitted} = await learning.submit(cwd, kind, hash, runId, payload)
-            sendJson(res, 200, {ok: true, alreadySubmitted})
-            return
+        if (req.method === 'POST' && path === '/learning/api/runs') {
+            const body = await readBody(req) as Partial<DirectRunRequest>
+            const cwd = resolveCwd(asString(body.workspaceId))
+            const kind = artifactKindOf(asString(body.category))
+            const hash = asString(body.hash)
+            if (cwd === null || kind === null || !isValidArtifactHash(hash)) return sendJson(res, 400, {error: '工件目标无效'})
+            const run = await learning.obtainDirectRun(cwd, kind, hash)
+            return sendJson(res, 200, await learning.describeRun(run))
         }
 
-        // TIPS：只读预览，禁止提交
-        const previewSubmitMatch = /^\/learning\/([a-f0-9]{12})\/(lessons|reviews|quizzes)\/([a-f0-9]{6,64})\/submit$/iu.exec(path)
-        if (req.method === 'POST' && previewSubmitMatch !== null) {
-            sendJson(res, 403, {ok: false, error: '只读预览无法提交，请先开始一次作答'})
-            return
+        if (req.method === 'POST' && path === '/learning/api/runs/abort') {
+            const body = await readBody(req) as Partial<AbortRunRequest>
+            const cwd = resolveCwd(asString(body.workspaceId))
+            const kind = artifactKindOf(asString(body.category))
+            const hash = asString(body.hash)
+            const runId = asString(body.runId)
+            if (cwd === null || kind === null || !isValidArtifactHash(hash) || !isValidRunId(runId)) return sendJson(res, 400, {error: 'Run 目标无效'})
+            const finished = await learning.finishRun({cwd, kind, hash, runId}, {state: 'aborted', ...(body.reason === undefined ? {} : {reason: body.reason})})
+            return sendJson(res, 200, {outcome: finished.outcome.state, alreadyFinished: finished.alreadyFinished})
         }
 
-        // 获取运行中的展示描述符
-        if (req.method === 'GET' && path === '/learning/api/present/descriptor') {
-            const cwdParam = url.searchParams.get('cwd')
-            const callId = url.searchParams.get('callId') ?? ''
-
-            if (cwdParam === null || callId.length === 0) {
-                sendJson(res, 400, {ok: false, error: '必须提供 cwd 和 callId'})
-                return
-            }
-
-            recordWorkspaceHashIdByGeneratingItFromItsCwd(cwdParam)
-
-            const descriptor = learning.resolveDescriptor(cwdParam, callId)
-            if (descriptor === null) {
-                sendJson(res, 404, {ok: false, error: '该调用当前没有正在运行的工件展示'})
-                return
-            }
-
-            sendJson(res, 200, descriptor)
-            return
+        if (req.method === 'POST' && path === '/learning/api/delete') {
+            const body = await readBody(req) as Partial<DeleteLearningEntityRequest> & {readonly workspaceId?: unknown}
+            const cwd = resolveCwd(asString(body.workspaceId))
+            if (cwd === null) return sendJson(res, 404, {error: '未知的工作区'})
+            if (body.target === 'outline') await learning.deleteOutline(cwd, asString(body.id))
+            else if (body.target === 'review-plan') await learning.deleteReviewPlan(cwd, asString(body.id), body.preserveArtifacts === true)
+            else if (body.target === 'artifact') {
+                const kind = artifactKindOf(asString(body.category))
+                if (kind === null) return sendJson(res, 400, {error: '工件类型无效'})
+                await learning.deleteArtifact(cwd, kind, asString(body.hash))
+            } else return sendJson(res, 400, {error: '删除目标无效'})
+            return sendJson(res, 200, {ok: true})
         }
 
-        // TIPS：获取 GUI 学习状态
         if (req.method === 'GET' && path === '/learning/api/state') {
             const cwdParam = url.searchParams.get('cwd')
-            let cwd: string | null = cwdParam !== null ? cwdParam : resolveCwd(url.searchParams.get('workspaceId') ?? '')
-
-            if (cwd === null) {
-                sendJson(res, 404, {error: '未知的工作区'})
-                return
-            }
-
+            const cwd = cwdParam ?? resolveCwd(url.searchParams.get('workspaceId') ?? '')
+            if (cwd === null) return sendJson(res, 404, {error: '未知的工作区'})
             recordWorkspaceHashIdByGeneratingItFromItsCwd(cwd)
 
-            const files = learning.filesFor(cwd)
-            const learningDirExists = await files.currentIsLearningWorkspace()
-            const outlines: OutlineDto[] = []
-            for (const outline of learningDirExists ? await learning.listOutlines(cwd) : []) outlines.push({...outline, nodeCount: outline.nodes.length})
-
-            const cards: CardDto[] = []
-            for (const cardFile of learningDirExists ? await files.listCards() : []) {
-                const card = cardFile.card as { due?: unknown }
-                cards.push({lessonId: cardFile.lessonId, due: typeof card.due === 'string' ? card.due : card.due instanceof Date ? card.due.toISOString() : null, history: cardFile.history})
-            }
-
-            sendJson(res, 200, {outlines, cards, lessons: await files.listArtifacts('lesson'), reviews: await files.listArtifacts('review'), quizzes: await files.listArtifacts('quiz')} satisfies LearningDataDto)
-            return
+            const outlines = await learning.listOutlines(cwd)
+            const reviewPlans = await learning.reviewPlansFor(cwd).list()
+            const temporaryReviews = await learning.reviewPlansFor(cwd).temporaryManifest()
+            const lessons = await learning.listArtifacts(cwd, 'lesson')
+            const references = new Set<string>()
+            for (const outline of outlines) for (const hash of outlineArtifactHashes(outline)) references.add(hash)
+            const data: LearningDataDto = {outlines, reviewPlans, temporaryReviews, orphanLessonHashes: lessons.filter(artifact => !references.has(artifact.hash)).map(artifact => artifact.hash), lessons, reviews: await learning.listArtifacts(cwd, 'review'), quizzes: await learning.listArtifacts(cwd, 'quiz')}
+            return sendJson(res, 200, data)
         }
 
-        // 数据变更流：前端只订阅失效信号，业务数据仍由各 GET 接口提供
         if (req.method === 'GET' && path === '/learning/api/changes') {
             const lastEventId = Array.isArray(req.headers['last-event-id']) ? req.headers['last-event-id'][0] : req.headers['last-event-id']
             const lastId = Number.parseInt(url.searchParams.get('since') ?? lastEventId ?? '0', 10)
             const changes = Number.isFinite(lastId) ? learning.dataChanges.eventsSince(lastId) : null
-
             res.writeHead(200, {'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive'})
             res.write(': connected\n\n')
-
             if (changes === null) {
                 const reset = learning.dataChanges.resetSignal()
                 res.write(`id: ${reset.id}\ndata: ${JSON.stringify(reset)}\n\n`)
-                return
-            }
-
-            for (const change of changes ?? []) res.write(`id: ${change.id}\ndata: ${JSON.stringify(change)}\n\n`)
-
+            } else for (const change of changes) res.write(`id: ${change.id}\ndata: ${JSON.stringify(change)}\n\n`)
             const send = (change: DataChange | DataResetSignal): void => { res.write(`id: ${change.id}\ndata: ${JSON.stringify(change)}\n\n`) }
-            const disposer = learning.dataChanges.subscribe(send)
+            const dispose = learning.dataChanges.subscribe(send)
             const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 25_000)
             heartbeat.unref?.()
-            req.on('close', () => { clearInterval(heartbeat); disposer() })
+            req.on('close', () => { clearInterval(heartbeat); dispose() })
             return
         }
 
-        // 仅探测工作区是否存在学习目录
         if (req.method === 'GET' && path === '/learning/api/workspace') {
-            const cwdParam = url.searchParams.get('cwd')
-
-            if (cwdParam === null || cwdParam.length === 0) {
-                sendJson(res, 400, {error: '需要提供 cwd'})
-                return
-            }
-
-            recordWorkspaceHashIdByGeneratingItFromItsCwd(cwdParam)
-            sendJson(res, 200, {cwd: cwdParam, workspaceId: generateWorkspaceHashIdOf(cwdParam), isLearningWorkspace: await isLearningWorkspace(cwdParam)})
-            return
+            const cwd = url.searchParams.get('cwd')
+            if (cwd === null || cwd.length === 0) return sendJson(res, 400, {error: '需要提供 cwd'})
+            recordWorkspaceHashIdByGeneratingItFromItsCwd(cwd)
+            return sendJson(res, 200, {cwd, workspaceId: generateWorkspaceHashIdOf(cwd), isLearningWorkspace: await isLearningWorkspace(cwd)})
         }
 
-        // ---TIPS：笔记这一块---
-
-        // 获取全部全局笔记
-        if (req.method === 'GET' && path === '/learning/api/notes') {
-            sendJson(res, 200, learning.notes.snapshot())
-            return
-        }
-
-        // 修改全局笔记
+        if (req.method === 'GET' && path === '/learning/api/notes') return sendJson(res, 200, learning.notes.snapshot())
         if (req.method === 'POST' && path === '/learning/api/notes') {
             const body = await readBody(req) as Record<string, unknown>
-            const action = typeof body.action === 'string' ? body.action : ''
+            const action = asString(body.action)
             const notes = learning.notes
-
-            try {
-                switch (action) {
-                    case 'folder:add':
-                        sendJson(res, 200, await notes.addFolder(asString(body.name)))
-                        return
-
-                    case 'folder:rename':
-                        await notes.renameFolder(asString(body.folderId), asString(body.name))
-                        sendJson(res, 200, {ok: true})
-                        return
-
-                    case 'folder:delete':
-                        await notes.deleteFolder(asString(body.folderId))
-                        sendJson(res, 200, {ok: true})
-                        return
-
-                    case 'note:add':
-                        sendJson(res, 200, await notes.addNote({folderId: asString(body.folderId), title: asString(body.title), markdown: asString(body.markdown), tags: asTags(body.tags), access: asAccess(body.access)}))
-                        return
-
-                    case 'note:update':
-                        sendJson(res, 200, await notes.updateNote(asString(body.noteId), {...(typeof body.title === 'string' ? {title: body.title} : {}), ...(typeof body.markdown === 'string' ? {markdown: body.markdown} : {}), ...(Array.isArray(body.tags) ? {tags: asTags(body.tags)} : {}), ...(body.access === 'private' || body.access === 'readable' || body.access === 'readwrite' ? {access: asAccess(body.access)} : {}), ...(typeof body.folderId === 'string' ? {folderId: body.folderId} : {})}))
-                        return
-
-                    case 'note:delete':
-                        await notes.deleteNote(asString(body.noteId))
-                        sendJson(res, 200, {ok: true})
-                        return
-
-                    default:
-                        sendJson(res, 400, {error: `未知的笔记操作：${action}`})
-                        return
-                }
-            } catch (error: unknown) {
-                sendJson(res, 400, {error: error instanceof Error ? error.message : String(error)})
-                return
+            switch (action) {
+                case 'folder:add': return sendJson(res, 200, await notes.addFolder(asString(body.name)))
+                case 'folder:rename': await notes.renameFolder(asString(body.folderId), asString(body.name)); return sendJson(res, 200, {ok: true})
+                case 'folder:delete': await notes.deleteFolder(asString(body.folderId)); return sendJson(res, 200, {ok: true})
+                case 'note:add': return sendJson(res, 200, await notes.addNote({folderId: asString(body.folderId), title: asString(body.title), markdown: asString(body.markdown), tags: asTags(body.tags), access: asAccess(body.access)}))
+                case 'note:update': return sendJson(res, 200, await notes.updateNote(asString(body.noteId), {...(typeof body.title === 'string' ? {title: body.title} : {}), ...(typeof body.markdown === 'string' ? {markdown: body.markdown} : {}), ...(Array.isArray(body.tags) ? {tags: asTags(body.tags)} : {}), ...(body.access === 'private' || body.access === 'readable' || body.access === 'readwrite' ? {access: asAccess(body.access)} : {}), ...(typeof body.folderId === 'string' ? {folderId: body.folderId} : {})}))
+                case 'note:delete': await notes.deleteNote(asString(body.noteId)); return sendJson(res, 200, {ok: true})
+                default: return sendJson(res, 400, {error: `未知的笔记操作：${action}`})
             }
         }
 
-        // ---TIPS：GUI触发工件展示的处理点---
-
-        // 从学习面板发起IN-BAND展示
         if (req.method === 'POST' && path === '/learning/api/inband-present') {
             const body = await readBody(req) as Partial<InbandPresentRequest>
-            const workspaceId = asString(body.workspaceId)
-            const category = asString(body.category)
+            const cwd = resolveCwd(asString(body.workspaceId))
+            if (cwd === null) return sendJson(res, 404, {ok: false, error: '未知的工作区'})
+
+            if (body.intent === 'start-due-review') {
+                const plan = await learning.reviewPlansFor(cwd).read(asString(body.planId))
+                if (plan === null) return sendJson(res, 404, {ok: false, error: '复习计划不存在'})
+                const instruction = `用户从学习面板确认开始复习计划 ${plan.id} 的到期复习。请调用 claim_review_plan_round 取得 active round，再生成全新的 Review Artifact，调用 update_review_plan_round_artifact_binding 绑定本期，再 present、批改、save_feedback，最后调用 update_review_plan 结算计划。`
+                return sendJson(res, 200, {ok: true, ...await deliverIntent(cwd, asString(body.sessionId), instruction)})
+            }
+
+            if (body.intent !== 'present-existing') return sendJson(res, 400, {ok: false, error: 'In-band 意图无效'})
+            const kind = artifactKindOf(asString(body.category))
             const hash = asString(body.hash)
-            const kind = artifactKindOf(category)
-
-            if (kind === null || !isValidArtifactHash(hash)) {
-                sendJson(res, 400, {ok: false, error: '工件目标无效'})
-                return
-            }
-
-            const cwd = resolveCwd(workspaceId)
-            if (cwd === null) {
-                sendJson(res, 404, {ok: false, error: '未知的工作区'})
-                return
-            }
-
-            const meta = await learning.filesFor(cwd).readMeta(kind, hash)
-            if (meta === null) {
-                sendJson(res, 404, {ok: false, error: '未知的工件'})
-                return
-            }
-
-            const instruction = `用户从学习面板对工件发起了一次带内呈现（${kind}，hash ${hash}，标题「${meta.title}」）：
-请调用 present_artifact(kind='${kind}', target_id='${meta.targetId}', path='${cwd}/${LEARNING_DIR}/${category}/${hash}/index.html', title='${meta.title}')
-并走完流程（present → 拿到 result → 批改 → save_feedback 保存报告 → 按需 update_review_plan → 回复用户）。`
-
-            const sessionId = asString(body.sessionId)
-            let agent: Agent | undefined = sessionId.length > 0 ? ctx.agents.get(brandSessionId(sessionId)) : undefined
-
-            if (agent !== undefined) {
-                learning.notify(agent, instruction)
-                sendJson(res, 200, {ok: true, mode: 'current-session', sessionId})
-                return
-            }
-
-            // TIPS：测试性。没有可复用会话时，新建会话执行
-            try {
-                const neoSession = await ctx.agents.create({sessionId: brandSessionId(randomUUID()) as SessionId, meta: {cwd}})
-                await learning.enterVibeLearning(neoSession.agent, instruction) // 使之直接进入学习模式，并使用该指导来bootstrap模型
-                sendJson(res, 200, {ok: true, mode: 'new-session', sessionId: String(neoSession.agent.id)})
-            } catch (error: unknown) {
-                sendJson(res, 500, {ok: false, error: error instanceof Error ? error.message : String(error)})
-            }
-
-            return
+            if (kind === null || !isValidArtifactHash(hash) || !await learning.artifactsFor(cwd).exists(kind, hash)) return sendJson(res, 404, {ok: false, error: '工件不存在'})
+            const runId = body.runId === undefined ? undefined : asString(body.runId)
+            if (runId !== undefined && (!isValidRunId(runId) || !await learning.runs.exists({cwd, kind, hash, runId}) || await learning.runs.outcome({cwd, kind, hash, runId}) !== null)) return sendJson(res, 409, {ok: false, error: '指定的 Run 不是 Active'})
+            const title = await learning.artifactsFor(cwd).title(kind, hash)
+            const instruction = `用户要求 In-band 查看已有 ${kind} 工件「${title}」。请调用 present_artifact(kind='${kind}', path='${learning.filesFor(cwd).artifactHtml(kind, hash)}'${runId === undefined ? '' : `, run_id='${runId}'`})。若收到 completed，可按对话需要批改并 save_feedback；这是历史或已有工件，默认不得改变大纲 Workflow 或复习计划。`
+            return sendJson(res, 200, {ok: true, ...await deliverIntent(cwd, asString(body.sessionId), instruction)})
         }
 
-        // ---TIPS：架设页面---
-
-        // 展示活动 Run 页面
-        const runMatch = /^\/learning\/([a-f0-9]{12})\/(lessons|reviews|quizzes)\/([a-f0-9]{6,64})\/runs\/([a-z0-9_-]{1,128})\/index\.html$/iu.exec(path)
-        if (req.method === 'GET' && runMatch !== null) {
-            const workspaceId = runMatch[1]
-            const kind = artifactKindOf(runMatch[2])
-            const hash = runMatch[3]
-            const runId = runMatch[4]
-
-            if (kind === null || workspaceId === undefined || hash === undefined || runId === undefined || !isValidRunId(runId)) {
-                sendText(res, 404, '未找到')
-                return
-            }
-
-            const cwd = resolveCwd(workspaceId)
-            if (cwd === null) {
-                sendText(res, 404, '未知的工作区')
-                return
-            }
-
-            const files = learning.filesFor(cwd)
-            const run = await files.readRun(kind, hash, runId)
-            if (run === null || run.kind !== kind || run.artifactHash !== hash) {
-                sendText(res, 404, '未找到对应运行')
-                return
-            }
-
-            const html = await files.readArtifactHtml(kind, hash)
-            if (html === null) {
-                sendText(res, 404, '未找到对应工件')
-                return
-            }
-
-            sendText(res, 200, injectIntoHtml(html), 'text/html; charset=utf-8')
-            return
+        const runPage = /^\/learning\/([a-f0-9]{12})\/(lessons|reviews|quizzes)\/([a-f0-9]{6,64})\/runs\/([a-z0-9_-]{1,128})\/index\.html$/iu.exec(path)
+        if (req.method === 'GET' && runPage !== null) {
+            const cwd = resolveCwd(runPage[1] ?? '')
+            const kind = artifactKindOf(runPage[2])
+            const hash = runPage[3]
+            const runId = runPage[4]
+            if (cwd === null || kind === null || hash === undefined || runId === undefined) return sendText(res, 404, '未找到')
+            const ref = {cwd, kind, hash, runId}
+            if (!await learning.runs.exists(ref)) return sendText(res, 404, 'Run 不存在')
+            if (await learning.runs.outcome(ref) !== null) return sendText(res, 410, 'Run 已终结')
+            const html = await learning.artifactsFor(cwd).readHtml(kind, hash)
+            return html === null ? sendText(res, 404, '工件不存在') : sendText(res, 200, injectIntoHtml(html, true), 'text/html; charset=utf-8')
         }
 
-        // 展示只读预览页面
-        const match = /^\/learning\/([a-f0-9]{12})\/(lessons|reviews|quizzes)\/([a-f0-9]{6,64})\/index\.html$/iu.exec(path)
-        if (req.method === 'GET' && match !== null) {
-            const workspaceId = match[1]
-            const kind = artifactKindOf(match[2])
-            const hash = match[3]
-
-            if (kind === null || workspaceId === undefined || hash === undefined) {
-                sendText(res, 404, '未找到')
-                return
-            }
-
-            const cwd = resolveCwd(workspaceId)
-            if (cwd === null) {
-                sendText(res, 404, '未知的工作区')
-                return
-            }
-
-            const html = await learning.filesFor(cwd).readArtifactHtml(kind, hash)
-            if (html === null) {
-                sendText(res, 404, '未找到对应工件')
-                return
-            }
-
-            sendText(res, 200, injectIntoHtml(html), 'text/html; charset=utf-8')
-            return
+        const preview = /^\/learning\/([a-f0-9]{12})\/(lessons|reviews|quizzes)\/([a-f0-9]{6,64})\/index\.html$/iu.exec(path)
+        if (req.method === 'GET' && preview !== null) {
+            const cwd = resolveCwd(preview[1] ?? '')
+            const kind = artifactKindOf(preview[2])
+            const hash = preview[3]
+            if (cwd === null || kind === null || hash === undefined) return sendText(res, 404, '未找到')
+            const html = await learning.artifactsFor(cwd).readHtml(kind, hash)
+            return html === null ? sendText(res, 404, '工件不存在') : sendText(res, 200, injectIntoHtml(html, false), 'text/html; charset=utf-8')
         }
 
         sendText(res, 404, '未找到')
     }
 
-    // TIPS：给 DSH 的 Server 搞里头
-    ctx.effect(() => ctx.webServer.register({
-        kind: 'prefix', path: LEARNING_ROUTE_PREFIX, handler: (req, res) => {
-            void handle(req, res).catch((error: unknown) => {
-                ctx.logger.warn(`学习路由处理失败：${error instanceof Error ? error.message : String(error)}`)
-
-                if (!res.headersSent) sendJson(res, 500, {error: error instanceof Error ? error.message : String(error)})
-                else res.destroy() // 不发回了
-            })
-        },
-    }), 'dvl: /learning routes')
+    ctx.effect(() => ctx.webServer.register({kind: 'prefix', path: LEARNING_ROUTE_PREFIX, handler: (req, res) => {
+        void handle(req, res).catch((error: unknown) => {
+            ctx.logger.warn(`学习路由处理失败：${error instanceof Error ? error.message : String(error)}`)
+            if (!res.headersSent) sendJson(res, 500, {error: error instanceof Error ? error.message : String(error)})
+            else res.destroy()
+        })
+    }}), 'dvl: /learning routes')
 }

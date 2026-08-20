@@ -18,7 +18,7 @@ async function getCurrentStatusText(ctx: Context, agent: Agent): Promise<string>
     return outline === null ? `${hasEnteredText}不过您激活的纲目 ${state.activeOutlineId} 不可用` : `${hasEnteredText}当前激活的纲目：${outline.title}`
 }
 
-// 执行用户的无参 /learn 调用
+// 执行用户的无参 /learn 调用。TODO 可以加个可选的<PROMPT>参数，一起在steer里传给模型
 async function execute(ctx: Context, invocation: CommandInvocation): Promise<CommandResult> {
     if (invocation.rawInput.trim().length > 0) return {kind: 'error', text: '/learn 不需要参数。您进入后直接用自然说明学习意图即可'}
 

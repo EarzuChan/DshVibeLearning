@@ -35,21 +35,24 @@ dsh web # 默认实例持久生效
 
 - **Artifact 不可变**，以内容 hash 寻址；**每次呈现/作答是一个独立 run**。
 - 服务器拥有 URL：`present_artifact` 用 DSH `callId` 创建/恢复 run，生成带不可猜测 `runId` 的 canonical URL；toolview 经 `cwd + callId` 解析 descriptor，settled/replay 时从 durable tool `presentationMeta` 恢复。
-- 同一 `runId` 重复提交幂等；明确「重新作答」= 新 run（独立 result/feedback）。
+- 同一 `runId` 重复提交幂等；明确「重新作答」= 新 Run（独立 `outcome.json` 与 `feedback.json`）。
 
 ```
-.dsh/learning/                          # 目录存在 = 学习工作区（无 manifest）
-  outlines/<outlineId>.json             # 纲目树 + 每课状态（未开始/学习中/答疑中/完成）
-  lessons/<hash>/index.html             # 课程工件（只含 index.html + meta.json）
-  lessons/<hash>/runs/<runId>/          # run.json + result.json + feedback.json
-  cards/<lessonId>.json                 # FSRS 卡（每课一张，ts-fsrs Card 原样持久化）
-  reviews/<hash>/…                      # 复习工件（每次复习全新生成）
-  quizzes/<hash>/…                      # 小测工件
+.dsh/learning/                          # 目录存在 = 学习工作区
+  outlines/<outlineId>.json             # 纯树形大纲 + 课程工件绑定 + 根级 Workflow
+  review-plans/<planId>.json            # 当前 FSRS Card + 正式 Review Round 历史
+  artifacts/lessons/<hash>/index.html   # 课程工件
+  artifacts/reviews/<hash>/index.html   # 复习工件
+  artifacts/reviews/man.json            # 并行托管临时 Review Round
+  artifacts/quizzes/<hash>/index.html   # 小测工件
+  artifacts/<kind>/<hash>/runs/<runId>/outcome.json
+  artifacts/<kind>/<hash>/runs/<runId>/feedback.json
 ```
 
-- `<hash>` = 工件内容 sha256 前 16 位 → 内容不变 id 不变；纲目修改后不再被引用的工件/卡**自动清除**。
-- `run.json` 只存机制信息（artifact / target / callId / 创建时间），不存教学判断。
-- result = DVL 机制信封（`kind/targetId/artifactHash/runId/submittedAt` + 不透明 `payload`），**DVL 不解析教学语义**；feedback = 每 run 一份的机制信封（`runId/savedAt` + 不透明 `payload`），同样不解析其 schema。
+- `<kind> + <hash>` 是工件身份；不同类型的 hash 空间不互通。
+- 工件不可变；Run 目录存在即表示已开启，`outcome.json` 出现即表示 Run 已终结（完成或放弃）。等待超时只结束本次 In-band Tool Call，不终结 Run。
+- `feedback.json` 只保存不透明批改载荷。DVL 只确认它存在，不解析教学内容。
+- 课程结束创建 Review Plan 时只写 FSRS Card，不创建初始 Round。正式 Round 由 `claim_review_plan_round` 创建，临时 Round 由 `claim_temporary_review_plan_round` 写入 `man.json`。
 - 笔记 = 全局存储（config `dataDir`，默认 `~/.dsh-vibe-learning/notes.json`），不属于任何工作区文件；模型面按「当前工作区 + tags」过滤。
 
 ## 提交
@@ -62,10 +65,10 @@ dsh web # 默认实例持久生效
 模型设计 artifact 与 result 形态
 → 用户学习、作答
 → DVL 原样存 result
-→ in-band：present retValue 返回 result / standalone：get_result(run_id)
+→ in-band：present_artifact 返回 Run outcome / standalone：get_run_outcome(kind, hash, run_id)
 → 模型研判 → save_feedback(kind, hash, run_id, 任意 JSON) 保存报告
 → 模型向用户解释（报告 + 分析 + 复习计划状态）
-→ 模型可选 update_review_plan（唯一推进 FSRS 的路径）
+→ 模型按流程调用 update_review_plan（唯一推进 FSRS 的路径）
 ```
 
 ## 命令
@@ -73,14 +76,9 @@ dsh web # 默认实例持久生效
 - `/learn` —— 进入氛围学习（单向阀，一次性；模型回应并开始共建大纲）
 - 当前激活纲目是会话事件 `dvl://learning/change-outline:<outlineId|null>` 的投影值，不属于工作区文件；同一工作区的多个会话可以有不同激活纲目。
 
-## 工具（模型面，10 个）
+## 工具
 
-`present_artifact` · `get_result`（run-aware）· `save_feedback`（不透明报告）· `get_outline` · `update_outline`（工具内自确认）· `activate_outline` · `filter_notes` · `get_note` · `update_note`（工具内自确认）· `update_review_plan`（工具内自确认）。
-
-- `present_artifact` 创建/恢复 run，返回 `run_id + url + result`；present/result **零隐式卡片副作用**。
-- `save_feedback(kind, hash, run_id, feedback)` 把模型的批改报告作为不透明 JSON 原样落盘到该 run；系统负责 run 归属、`已有 result` 校验与路径，不校验 feedback schema。
-- `update_review_plan(lesson_id, source_kind, source_hash, source_run_id, rating, reason)` 是**唯一**创建/推进 FSRS 卡的路径；系统校验 source run 真实存在、已有 result、且归属该 lesson；`source_run_id` 作幂等来源，不能重复推进。
-- 确认弹窗复用 `userQuestions`，返回值 = confirmed / cancelled / error。
+见[这里](src/tool/index.ts)。
 
 ## Prompt 面
 

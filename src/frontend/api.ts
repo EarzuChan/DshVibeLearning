@@ -2,7 +2,7 @@
 
 import type {NotesActions} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {DataChangeDto, InbandPresentRequest, InbandPresentResult, LearningDataDto, LearningWorkspaceDto, NotesDto, PresentArtifactDescriptor} from '../shared/api.ts'
+import type {AbortRunRequest, ArtifactRunDescriptor, DataChangeDto, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, InbandPresentResult, LearningDataDto, LearningWorkspaceDto, NotesDto} from '../shared/api.ts'
 import {LEARNING_ROUTE_PREFIX} from '../shared/routes.ts'
 
 // 执行 JSON GET/POST 请求，非 2xx 时抛出错误
@@ -31,18 +31,41 @@ export function openDataChangeStream(onChange: (change: DataChangeDto) => void):
 }
 
 // 发起带内展示请求并返回服务端结束结果
-export function inbandPresent(workspaceId: string, category: ArtifactCategory, hash: string, sessionId: string): Promise<InbandPresentResult> {
-  const body: InbandPresentRequest = {workspaceId, category, hash, sessionId}
+export function inbandPresentExisting(workspaceId: string, category: ArtifactCategory, hash: string, sessionId: string, runId?: string): Promise<InbandPresentResult> {
+  const body: InbandPresentRequest = {intent: 'present-existing', workspaceId, category, hash, sessionId, ...(runId === undefined ? {} : {runId})}
   return requestJson<InbandPresentResult>(`${LEARNING_ROUTE_PREFIX}/api/inband-present`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
 }
 
+// 请求模型在指定会话中开始一个已经到期的复习期次
+export function startDueReview(workspaceId: string, planId: string, sessionId: string): Promise<InbandPresentResult> {
+  const body: InbandPresentRequest = {intent: 'start-due-review', workspaceId, planId, sessionId}
+  return requestJson<InbandPresentResult>(`${LEARNING_ROUTE_PREFIX}/api/inband-present`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+}
+
+// 显式创建一次不经过模型的 Direct Run
+export function createDirectRun(workspaceId: string, category: ArtifactCategory, hash: string): Promise<ArtifactRunDescriptor> {
+  const body: DirectRunRequest = {workspaceId, category, hash}
+  return requestJson<ArtifactRunDescriptor>(`${LEARNING_ROUTE_PREFIX}/api/runs`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+}
+
+// 由用户终结一个仍然活跃的 Run
+export function abortRun(workspaceId: string, category: ArtifactCategory, hash: string, runId: string): Promise<void> {
+  const body: AbortRunRequest = {workspaceId, category, hash, runId}
+  return requestJson<unknown>(`${LEARNING_ROUTE_PREFIX}/api/runs/abort`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(() => undefined)
+}
+
+// 执行一个经过界面确认的学习实体删除命令
+export function deleteLearningEntity(workspaceId: string, body: DeleteLearningEntityRequest): Promise<void> {
+  return requestJson<unknown>(`${LEARNING_ROUTE_PREFIX}/api/delete`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({workspaceId, ...body})}).then(() => undefined)
+}
+
 // 根据 cwd + callId 获取运行中展示的规范描述符，服务端不存在对应运行时返回 null
-export async function resolveDescriptor(cwd: string, callId: string): Promise<PresentArtifactDescriptor | null> {
-  const response = await fetch(`${LEARNING_ROUTE_PREFIX}/api/present/descriptor?cwd=${encodeURIComponent(cwd)}&callId=${encodeURIComponent(callId)}`)
+export async function resolveDescriptor(cwd: string, callId: string): Promise<ArtifactRunDescriptor | null> {
+  const response = await fetch(`${LEARNING_ROUTE_PREFIX}/api/present/live?cwd=${encodeURIComponent(cwd)}&callId=${encodeURIComponent(callId)}`)
   if (response.status === 404) return null
 
   if (!response.ok) throw new Error(`DVL：请求展示描述符失败 ${response.status} ${response.statusText}`)
-  return await response.json() as Promise<PresentArtifactDescriptor>
+  return await response.json() as Promise<ArtifactRunDescriptor>
 }
 
 // 获取不依赖工作区的全局笔记快照
@@ -64,3 +87,6 @@ export function buildNotesActions(): NotesActions {
 
 // 构造工件只读预览 URL，不带 run id，因此禁用提交
 export function artifactUrl(workspaceId: string, category: ArtifactCategory, hash: string): string { return `${LEARNING_ROUTE_PREFIX}/${workspaceId}/${category}/${hash}/index.html` }
+
+// 构造一个已经存在的 Run 页面 URL
+export function runUrl(workspaceId: string, category: ArtifactCategory, hash: string, runId: string): string { return `${LEARNING_ROUTE_PREFIX}/${workspaceId}/${category}/${hash}/runs/${runId}/index.html` }

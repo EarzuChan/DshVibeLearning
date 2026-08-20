@@ -1,86 +1,69 @@
-import type {ArtifactKind} from '../shared/artifacts.ts'
-import type {LessonState, ReviewRating, ReviewRecord} from '../shared/model.ts'
+import type {ArtifactTarget} from '../shared/artifacts.ts'
+import type {OutlinePhase, RunOutcome} from '../shared/model.ts'
 
-// 一次工件展示或作答尝试
-export interface ArtifactRun {
+export interface ArtifactRef extends ArtifactTarget {
+  readonly cwd: string
+}
+
+export interface RunRef extends ArtifactRef {
   readonly runId: string
-  readonly artifactHash: string
-  readonly kind: ArtifactKind
-  readonly targetId: string
+}
+
+export interface RunReuseKey {
+  readonly namespace: string
+  readonly value: string
+}
+
+export type PresentOutcome = {readonly outcome: 'completed'; readonly runId: string; readonly payload: unknown} | {readonly outcome: 'aborted'; readonly runId: string; readonly reason?: string} | {readonly outcome: 'timed-out'; readonly runId: string} | {readonly outcome: 'interrupted'; readonly runId: string} | {readonly outcome: 'error'; readonly detail: string}
+
+export interface ArtifactRunDescriptor extends ArtifactTarget {
+  readonly version: 2
+  readonly workspaceId: string
+  readonly title: string
+  readonly runId: string
+  readonly url: string
+}
+
+export interface InBandLease {
   readonly callId: string
-  readonly createdAt: string
+  readonly sessionId: string
+  readonly run: RunRef
 }
 
-// 不透明提交结果的机制信封
-export interface ResultEnvelope {
-  readonly kind: ArtifactKind
-  readonly targetId: string
-  readonly artifactHash: string
-  readonly runId: string
-  readonly submittedAt: string
-  readonly payload: unknown
+export interface LivePresentCall {
+  readonly descriptor: ArtifactRunDescriptor
+  readonly lease: InBandLease
 }
 
-// 不透明判阅报告的机制信封
-export interface FeedbackEnvelope {
-  readonly kind: ArtifactKind
-  readonly targetId: string
-  readonly artifactHash: string
-  readonly runId: string
-  readonly savedAt: string
-  readonly payload: unknown
-}
-
-// 持久化 FSRS 卡片文件
-export interface CardFile {
-  readonly lessonId: string
-  readonly card: Record<string, unknown>
-  readonly history: ReviewRecord[]
-}
-
-// 带内展示结束结果
-export type PresentOutcome = {readonly kind: 'result'; readonly result: ResultEnvelope} | {readonly kind: 'no-result'; readonly reason: 'interrupted' | 'timeout' | 'error'; readonly detail?: string}
-
-// 复习计划确认写入前的候选
-export interface ReviewPlanProposal {
-  readonly lessonId: string
-  readonly rating: ReviewRating
-  readonly sourceRunId: string
-  readonly reason?: string
-  readonly current: CardFile | null
-  readonly nextCard: Record<string, unknown>
-  readonly due: string
-  readonly alreadyApplied: boolean
-}
-
-// 每轮快照注入的单个纲目信息
 export interface SnapshotOutline {
   readonly id: string
   readonly title: string
+  readonly phase: OutlinePhase
 }
 
-// 每轮快照注入的当前课程信息
 export interface SnapshotLesson {
   readonly id: string
   readonly title: string
-  readonly state: LessonState
+  readonly phase: 'learning' | 'qa'
 }
 
-// 每轮快照注入的到期复习信息
-export interface SnapshotCard {
+export interface SnapshotReview {
+  readonly planId: string
   readonly lessonId: string
   readonly lessonTitle: string
-  readonly due: string
-  readonly state: string
-  readonly overdue: boolean
+  readonly dueAt: string
 }
 
-// 每轮注入的完整学习状态快照
 export interface LearningSnapshot {
   readonly workspaceId: string
   readonly learningDirExists: boolean
   readonly activeOutlineId: string | null
-  readonly outlines: SnapshotOutline[]
-  readonly currentLessons: SnapshotLesson[]
-  readonly dueCards: SnapshotCard[]
+  readonly outlines: readonly SnapshotOutline[]
+  readonly currentLesson: SnapshotLesson | null
+  readonly dueReviews: readonly SnapshotReview[]
+  readonly problem?: string
+}
+
+export function presentOutcomeOf(runId: string, outcome: RunOutcome): PresentOutcome {
+  return outcome.state === 'completed' ? {outcome: 'completed', runId, payload: outcome.payload} : {outcome: 'aborted', runId, ...(outcome.reason === undefined ? {} : {reason: outcome.reason})}
 }

@@ -9,11 +9,9 @@ declare module '@deepseek-ai/dsh-session/types' {
     }
 }
 
-const DVL_EVENT_PREFIX = 'dvl://learning'
-
 // ---入---
 
-const LEARNING_ENTERED_TEXT = `${DVL_EVENT_PREFIX}/entered`
+const LEARNING_ENTERED_TEXT = 'learning/enter'
 
 // 记录当前会话进入氛围学习
 export function recordLearningEnteredToSession(session: Session): void {
@@ -27,7 +25,7 @@ export function isLearningEntered(event: SessionEvent): boolean {
 
 // ---纲---
 
-const CHANGE_OUTLINE_PREFIX = `${DVL_EVENT_PREFIX}/change-outline:`
+const CHANGE_OUTLINE_PREFIX = 'learning/change-outline:'
 
 // 记录当前会话激活纲目的切换。null 表示明确没有激活纲目
 export function recordLearningOutlineChangeToSession(session: Session, outlineId: string | null): void {

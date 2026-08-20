@@ -4,7 +4,7 @@ import type {PropsRuntime, PropsStore, InjectFace, PropsLocale, HostObservable} 
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于引入 ui-conversation 的 SlotMap 类型合并
 import type {ToolCallViewProps} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {InbandPresentResult, PresentArtifactDescriptor} from '../shared/api.ts'
+import type {ArtifactRunDescriptor, InbandPresentResult} from '../shared/api.ts'
 import type {NoteAccess} from '../shared/model.ts'
 import type {createDvlViewStore} from './stores.ts'
 import type {LearningDomain, NotesDomain} from './state.ts'
@@ -25,8 +25,14 @@ export interface NotesActions {
 // 注入学习视图的 API
 export interface LearningApi {
   refresh: () => Promise<void> // 重新获取学习状态并写入共享 store，失败时抛错
-  inbandPresent: (category: ArtifactCategory, hash: string, sessionId: string) => Promise<InbandPresentResult> // 发起带内展示请求并返回服务端结束结果
-  openArtifact: (category: ArtifactCategory, hash: string) => void // 在新标签页打开工件只读预览
+  createDirectRun: (category: ArtifactCategory, hash: string) => Promise<ArtifactRunDescriptor>
+  abortRun: (category: ArtifactCategory, hash: string, runId: string) => Promise<void>
+  inbandPresentExisting: (category: ArtifactCategory, hash: string, sessionId: string, runId?: string) => Promise<InbandPresentResult>
+  startDueReview: (planId: string, sessionId: string) => Promise<InbandPresentResult>
+  deleteOutline: (id: string) => Promise<void>
+  deleteReviewPlan: (id: string, preserveArtifacts: boolean) => Promise<void>
+  deleteArtifact: (category: ArtifactCategory, hash: string) => Promise<void>
+  openRun: (category: ArtifactCategory, hash: string, runId: string) => void
   artifactUrl: (category: ArtifactCategory, hash: string) => string // 获取禁用提交的工件只读预览 URL
 }
 
@@ -69,7 +75,8 @@ export type NotesCardProps = PropsRuntime<'conversation.session.header.utilities
 
 // keyed present_artifact 工具视图注入接口
 export interface PresentToolViewInject {
-  readonly resolveDescriptor: (cwd: string, callId: string) => Promise<PresentArtifactDescriptor | null> // 根据 cwd + callId 获取运行中展示的规范描述符
+  readonly resolveDescriptor: (cwd: string, callId: string) => Promise<ArtifactRunDescriptor | null> // 根据 cwd + callId 获取运行中展示的规范描述符
+  readonly abortRun: (descriptor: ArtifactRunDescriptor) => Promise<void>
 }
 
 // present_artifact 工具视图完整 props

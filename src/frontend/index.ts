@@ -4,7 +4,7 @@ import type {ClientContext, SessionId} from '@deepseek-ai/dsh-client-runtime/cli
 import {createSnapshotStore, type SnapshotStore} from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client' // 仅用于合并 ctx.locale 的 Context 类型
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于合并 conversation.view、header utilities 等 SlotMap 类型
-import {artifactUrl, buildNotesActions, fetchLearningData, fetchLearningWorkspace, fetchNotes, inbandPresent, openDataChangeStream, resolveDescriptor} from './api.ts'
+import {abortRun, artifactUrl, buildNotesActions, createDirectRun, deleteLearningEntity, fetchLearningData, fetchLearningWorkspace, fetchNotes, inbandPresentExisting, openDataChangeStream, resolveDescriptor, runUrl, startDueReview} from './api.ts'
 import type {LearningApi, LearningViewInject, NotesActions, NotesCardInject, PresentToolViewInject} from './contract.ts'
 import {LearningView} from './LearningView.tsx'
 import {en, NS, zh} from './locales.ts'
@@ -178,17 +178,42 @@ export function apply(ctx: ClientContext): void {
 
         return {
             refresh,
-
-            inbandPresent: async (category, hash, targetSessionId) => {
+            createDirectRun: async (category, hash) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                return inbandPresent(ws, category, hash, targetSessionId)
+                return createDirectRun(ws, category, hash)
             },
-
-            openArtifact: (category, hash) => {
-                window.open(urlFor(category, hash), '_blank', 'noopener')
+            abortRun: async (category, hash, runId) => {
+                const ws = await ensureWorkspaceId()
+                if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
+                await abortRun(ws, category, hash, runId)
             },
-
+            inbandPresentExisting: async (category, hash, targetSessionId, runId) => {
+                const ws = await ensureWorkspaceId()
+                if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
+                return inbandPresentExisting(ws, category, hash, targetSessionId, runId)
+            },
+            startDueReview: async (planId, targetSessionId) => {
+                const ws = await ensureWorkspaceId()
+                if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
+                return startDueReview(ws, planId, targetSessionId)
+            },
+            deleteOutline: async id => {
+                const ws = await ensureWorkspaceId()
+                if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
+                await deleteLearningEntity(ws, {target: 'outline', id})
+            },
+            deleteReviewPlan: async (id, preserveArtifacts) => {
+                const ws = await ensureWorkspaceId()
+                if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
+                await deleteLearningEntity(ws, {target: 'review-plan', id, preserveArtifacts})
+            },
+            deleteArtifact: async (category, hash) => {
+                const ws = await ensureWorkspaceId()
+                if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
+                await deleteLearningEntity(ws, {target: 'artifact', category, hash})
+            },
+            openRun: (category, hash, runId) => { window.open(runUrl(knownWorkspaceId(), category, hash, runId), '_blank', 'noopener') },
             artifactUrl: urlFor,
         }
     }
@@ -293,6 +318,6 @@ export function apply(ctx: ClientContext): void {
     // TIPS：挂载 IN-BAND工件展现 视图
     ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
         name: 'tool.call.toolview', key: 'present_artifact', locale: NS, store,
-        inject: (): PresentToolViewInject => ({resolveDescriptor: (cwd, callId) => resolveDescriptor(cwd, callId)}),
+        inject: (): PresentToolViewInject => ({resolveDescriptor: (cwd, callId) => resolveDescriptor(cwd, callId), abortRun: async descriptor => abortRun(descriptor.workspaceId, descriptor.kind === 'lesson' ? 'lessons' : descriptor.kind === 'review' ? 'reviews' : 'quizzes', descriptor.hash, descriptor.runId)}),
     }, InBandPresentArtifactView))
 }
