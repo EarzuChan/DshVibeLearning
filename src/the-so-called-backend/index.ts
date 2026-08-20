@@ -9,10 +9,11 @@ import type {SessionId} from '@deepseek-ai/dsh-session'
 import {SessionId as brandSessionId} from '@deepseek-ai/dsh-session'
 import {LEARNING_DIR, isLearningWorkspace, isValidArtifactHash, isValidRunId} from '../core/files.ts'
 import type {LearningService} from '../core/index.ts'
+import type {DataChange, DataResetSignal} from '../core/data-change-bus.ts'
 import {generateWorkspaceHashIdOf} from '../core/identifiers.ts'
 import {recordWorkspaceHashIdByGeneratingItFromItsCwd, getWorkspaceCwdOrNullByItsHashId} from './workspace-hash-id-related.ts'
 import {artifactKindOf} from '../shared/artifacts.ts'
-import type {CardDto, InbandPresentRequest, LearningStateDto, OutlineDto} from '../shared/api.ts'
+import type {CardDto, InbandPresentRequest, LearningDataDto, OutlineDto} from '../shared/api.ts'
 import type {NoteAccess} from '../shared/model.ts'
 import {LEARNING_ROUTE_PREFIX} from '../shared/routes.ts'
 
@@ -213,8 +214,32 @@ export function installLearningRoutes(ctx: Context): void {
                 cards.push({lessonId: cardFile.lessonId, due: typeof card.due === 'string' ? card.due : card.due instanceof Date ? card.due.toISOString() : null, history: cardFile.history})
             }
 
-            const state: LearningStateDto = {workspaceId: generateWorkspaceHashIdOf(cwd), cwd, learningDirExists, outlines, cards, lessons: await files.listArtifacts('lesson'), reviews: await files.listArtifacts('review'), quizzes: await files.listArtifacts('quiz'), notes: learning.notes.snapshot()}
-            sendJson(res, 200, state)
+            sendJson(res, 200, {outlines, cards, lessons: await files.listArtifacts('lesson'), reviews: await files.listArtifacts('review'), quizzes: await files.listArtifacts('quiz')} satisfies LearningDataDto)
+            return
+        }
+
+        // 数据变更流：前端只订阅失效信号，业务数据仍由各 GET 接口提供
+        if (req.method === 'GET' && path === '/learning/api/changes') {
+            const lastEventId = Array.isArray(req.headers['last-event-id']) ? req.headers['last-event-id'][0] : req.headers['last-event-id']
+            const lastId = Number.parseInt(url.searchParams.get('since') ?? lastEventId ?? '0', 10)
+            const changes = Number.isFinite(lastId) ? learning.dataChanges.eventsSince(lastId) : null
+
+            res.writeHead(200, {'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive'})
+            res.write(': connected\n\n')
+
+            if (changes === null) {
+                const reset = learning.dataChanges.resetSignal()
+                res.write(`id: ${reset.id}\ndata: ${JSON.stringify(reset)}\n\n`)
+                return
+            }
+
+            for (const change of changes ?? []) res.write(`id: ${change.id}\ndata: ${JSON.stringify(change)}\n\n`)
+
+            const send = (change: DataChange | DataResetSignal): void => { res.write(`id: ${change.id}\ndata: ${JSON.stringify(change)}\n\n`) }
+            const disposer = learning.dataChanges.subscribe(send)
+            const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 25_000)
+            heartbeat.unref?.()
+            req.on('close', () => { clearInterval(heartbeat); disposer() })
             return
         }
 
@@ -228,7 +253,7 @@ export function installLearningRoutes(ctx: Context): void {
             }
 
             recordWorkspaceHashIdByGeneratingItFromItsCwd(cwdParam)
-            sendJson(res, 200, {cwd: cwdParam, isLearningWorkspace: await isLearningWorkspace(cwdParam)})
+            sendJson(res, 200, {cwd: cwdParam, workspaceId: generateWorkspaceHashIdOf(cwdParam), isLearningWorkspace: await isLearningWorkspace(cwdParam)})
             return
         }
 
@@ -249,7 +274,7 @@ export function installLearningRoutes(ctx: Context): void {
             try {
                 switch (action) {
                     case 'folder:add':
-                        sendJson(res, 200, notes.addFolder(asString(body.name)))
+                        sendJson(res, 200, await notes.addFolder(asString(body.name)))
                         return
 
                     case 'folder:rename':
@@ -263,11 +288,11 @@ export function installLearningRoutes(ctx: Context): void {
                         return
 
                     case 'note:add':
-                        sendJson(res, 200, notes.addNote({folderId: asString(body.folderId), title: asString(body.title), markdown: asString(body.markdown), tags: asTags(body.tags), access: asAccess(body.access)}))
+                        sendJson(res, 200, await notes.addNote({folderId: asString(body.folderId), title: asString(body.title), markdown: asString(body.markdown), tags: asTags(body.tags), access: asAccess(body.access)}))
                         return
 
                     case 'note:update':
-                        sendJson(res, 200, notes.updateNote(asString(body.noteId), {...(typeof body.title === 'string' ? {title: body.title} : {}), ...(typeof body.markdown === 'string' ? {markdown: body.markdown} : {}), ...(Array.isArray(body.tags) ? {tags: asTags(body.tags)} : {}), ...(body.access === 'private' || body.access === 'readable' || body.access === 'readwrite' ? {access: asAccess(body.access)} : {}), ...(typeof body.folderId === 'string' ? {folderId: body.folderId} : {})}))
+                        sendJson(res, 200, await notes.updateNote(asString(body.noteId), {...(typeof body.title === 'string' ? {title: body.title} : {}), ...(typeof body.markdown === 'string' ? {markdown: body.markdown} : {}), ...(Array.isArray(body.tags) ? {tags: asTags(body.tags)} : {}), ...(body.access === 'private' || body.access === 'readable' || body.access === 'readwrite' ? {access: asAccess(body.access)} : {}), ...(typeof body.folderId === 'string' ? {folderId: body.folderId} : {})}))
                         return
 
                     case 'note:delete':

@@ -1,4 +1,5 @@
 // FSRS 封装：每课一张卡片，仅由模型明确给出的评级推进，ts-fsrs 负责算法，DVL 负责评级映射与持久化，不存在分数到评级的自动推导
+// THINKING：如果是无什么鸟状态，也建议移动到util/？
 
 import {createEmptyCard, fsrs, generatorParameters, Rating, State} from 'ts-fsrs'
 import type {Card, Grade} from 'ts-fsrs'
@@ -17,10 +18,13 @@ export function gradeFor(rating: ReviewRating): Grade {
     switch (rating) {
         case 'again':
             return Rating.Again
+
         case 'hard':
             return Rating.Hard
+
         case 'good':
             return Rating.Good
+
         case 'easy':
             return Rating.Easy
     }
@@ -36,12 +40,16 @@ export function stateLabel(card: Card): string {
     switch (card.state) {
         case State.New:
             return 'new'
+
         case State.Learning:
             return 'learning'
+
         case State.Review:
             return 'review'
+
         case State.Relearning:
             return 'relearning'
+
         default:
             return String(card.state)
     }

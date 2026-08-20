@@ -40,7 +40,7 @@ export function OutlineCard({useLearning, useProjection, t}: OutlineCardProps) {
 
   // 活跃纲目：反应式派生而来
   const activeOutline = useMemo(() => {
-    const state = learning.state
+    const state = learning.data
 
     if (state === null) return null
     if (projection?.entered !== true) return null
@@ -52,7 +52,7 @@ export function OutlineCard({useLearning, useProjection, t}: OutlineCardProps) {
     if (outline === null) return null
 
     return {outline, lessons: lessonNodes(outline.nodes)}
-  }, [learning.state, projection])
+  }, [learning.data, projection])
 
   // 未进入学习：不渲染
   if (projection?.entered !== true) return null

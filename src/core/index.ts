@@ -9,6 +9,7 @@ import z from '@deepseek-ai/schemastery'
 import type {Agent, PreStepDecision} from '@deepseek-ai/dsh-agent'
 import {createUserMessage} from '@deepseek-ai/dsh-llm'
 import {LearningFiles} from './files.ts'
+import {DataChangeBus} from './data-change-bus.ts'
 import {newCard, nextCard, stateLabel} from './fsrs.ts'
 import type {Card} from 'ts-fsrs'
 import {NotesStore} from './notes.ts'
@@ -71,6 +72,7 @@ export class LearningService extends Service {
     static Config: z<Config> = z.object({dataDir: z.string().default(join(homedir(), '.dsh-vibe-learning')), presentTimeoutMs: z.number().default(3_600_000)})
 
     readonly notes: NotesStore // 插件全局数据目录上的笔记存储
+    readonly dataChanges = new DataChangeBus()
     private readonly pending = new Map<string, PendingPresent>()
     private readonly descriptors = new Map<string, DescriptorEntry>()
     private readonly preparations = new WeakMap<Agent, AgentPreparation>()
@@ -79,7 +81,7 @@ export class LearningService extends Service {
         super(ctx, 'learning') // “占领”一个Ctx上的命名空间
 
         // 笔记
-        this.notes = new NotesStore(config.dataDir ?? join(homedir(), '.dsh-vibe-learning'))
+        this.notes = new NotesStore(config.dataDir ?? join(homedir(), '.dsh-vibe-learning'), () => this.dataChanges.publish('notes'))
 
         // 系统Prompt
         ctx.inject(['systemPrompt'], (scope: Context) => {
@@ -158,7 +160,7 @@ export class LearningService extends Service {
             learningToolsEnabledAgents.add(agent)
         }
 
-        this.preparations.set(agent, {confirmedTurn: turn, snapshot: await this.snapshot(cwd, state.activeOutlineId)})
+        this.preparations.set(agent, {confirmedTurn: turn, snapshot: await this.snapshotLearningWorkspaceState(cwd, state.activeOutlineId)})
         return state
     }
 
@@ -179,6 +181,7 @@ export class LearningService extends Service {
         if (cwd === null) throw new Error('进入氛围学习需要会话有工作区目录')
 
         await this.filesFor(cwd).createLearningWorkspace() // TIPS：创建工作区目录！
+        this.dataChanges.publish('workspace', generateWorkspaceHashIdOf(cwd))
 
         recordLearningEnteredToSession(agent.session) // 对本会话注入进入氛围学习
         agent.steer(noticeMessage(bootMsg)) // 告诉Agent，目前进入氛围学习
@@ -278,6 +281,7 @@ export class LearningService extends Service {
         const files = this.filesFor(cwd)
         await files.writeOutline(outline)
         await this.cleanupOrphans(cwd, outline)
+        this.dataChanges.publish('learning', generateWorkspaceHashIdOf(cwd))
     }
 
     // 清理纲目更新后失去引用的工件与卡片，只保留仍被课程引用或仍属于有效课程的内容
@@ -293,25 +297,26 @@ export class LearningService extends Service {
     }
 
     // 设置课程节点在纲目文件中的推进状态
-    async setLessonState(cwd: string, lessonId: string, state: OutlineNode['state']): Promise<void> {
+    private async setLessonState(cwd: string, lessonId: string, state: OutlineNode['state'], notify = true): Promise<void> {
         const files = this.filesFor(cwd)
         for (const outline of await files.listOutlines()) {
             const node = outline.nodes.find(item => item.lessonId === lessonId)
             if (node === undefined) continue
             const updated: Outline = {...outline, updatedAt: new Date().toISOString(), nodes: outline.nodes.map(item => item.lessonId === lessonId ? {...item, state} as OutlineNode : item)}
             await files.writeOutline(updated)
+            if (notify) this.dataChanges.publish('learning', generateWorkspaceHashIdOf(cwd))
             return
         }
     }
 
-    // ---
-    // CHECK：下面回头再读
+    // ---和展示、Run有关系---
 
     // 登记已创作工件并创建或恢复展示运行，同一 callId 重试时复用运行，返回服务端持有的规范描述符
     async createOrResumeRun(cwd: string, kind: ArtifactKind, targetId: string, path: string, callId: string, title?: string): Promise<PresentArtifactDescriptor> {
         if (!isSafeSegment(targetId)) throw new Error(`不安全的目标 ID ${targetId}`)
-        if (callId.length === 0) throw new Error('present 需要非空工具调用 ID')
+        if (callId.length === 0) throw new Error('创建或恢复 Run 需要非空工具调用 ID') // 这是为了InBand？如果是非InBand还能用吗
 
+        // THINKING：建不建议抽一个Run中枢？这把其耦合了
         const files = this.filesFor(cwd)
         const hash = files.validateArtifactPath(kind, path)
         if ((await files.readArtifactHtml(kind, hash)) === null) throw new Error(`路径 ${path} 下不存在工件 HTML`)
@@ -319,7 +324,8 @@ export class LearningService extends Service {
         const existingMeta = await files.readMeta(kind, hash)
         const metaTitle = existingMeta?.title ?? title?.trim() ?? hash
         if (existingMeta === null) await files.writeMeta(kind, hash, {kind, targetId, title: metaTitle, createdAt: new Date().toISOString()})
-        if (kind === 'lesson') await this.setLessonState(cwd, targetId, 'learning')
+
+        if (kind === 'lesson') await this.setLessonState(cwd, targetId, 'learning', false)
 
         let run = await files.findRunByCallId(kind, hash, callId)
         if (run === null) {
@@ -327,8 +333,11 @@ export class LearningService extends Service {
             await files.writeRun(kind, hash, run)
         }
 
+        this.dataChanges.publish('learning', generateWorkspaceHashIdOf(cwd))
+
         const descriptor: PresentArtifactDescriptor = {version: 1, callId, workspaceId: generateWorkspaceHashIdOf(cwd), kind, category: ARTIFACT_CATEGORY_BY_KIND[kind], hash, targetId: run.targetId, title: metaTitle, runId: run.runId, url: this.getRunUrl(cwd, kind, hash, run.runId)}
         this.descriptors.set(callId, {cwd, descriptor})
+
         return descriptor
     }
 
@@ -344,9 +353,10 @@ export class LearningService extends Service {
         this.descriptors.delete(callId)
     }
 
-    // 登记IN-BAND展示并等待提交、取消或超时，持久化提交与等待注册表通过同一入口收敛
+    // 登记IN-BAND展示并等待提交、取消或超时，持久化提交与等待注册表通过同一入口收敛。需要梳理一下这个present过程
     async present(cwd: string, kind: ArtifactKind, hash: string, runId: string, opts: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<PresentOutcome> {
         const files = this.filesFor(cwd)
+
         const run = await files.readRun(kind, hash, runId)
         if (run === null || run.kind !== kind || run.artifactHash !== hash) return {kind: 'no-result', reason: 'error', detail: `在 ${ARTIFACT_CATEGORY_BY_KIND[kind]}/${hash} 下找不到运行 ${runId}`}
 
@@ -359,6 +369,7 @@ export class LearningService extends Service {
 
         const entry: PendingPresent = {waiters: []}
         this.pending.set(key, entry)
+
         const settle = (outcome: PresentOutcome): void => {
             if (entry.outcome !== undefined) return
             entry.outcome = outcome
@@ -376,12 +387,15 @@ export class LearningService extends Service {
         const timeoutMs = opts.timeoutMs ?? this.config.presentTimeoutMs ?? 3600_000 // TIPS：默认一个小时
         const timer = setTimeout(() => settle({kind: 'no-result', reason: 'timeout'}), timeoutMs)
         timer.unref?.()
+
         const onAbort = (): void => settle({kind: 'no-result', reason: 'interrupted'})
         opts.signal?.addEventListener('abort', onAbort, {once: true})
+
         return new Promise(resolve => {
             entry.waiters.push(outcome => {
                 clearTimeout(timer)
                 opts.signal?.removeEventListener('abort', onAbort)
+
                 resolve(outcome)
             })
         })
@@ -404,20 +418,26 @@ export class LearningService extends Service {
         return {files, run}
     }
 
-    // 持久化优先的不透明提交路径：原子写入一次结果，lesson 推进到 qa，再结算等待中的IN-BAND展示
+    // 持久化优先的不透明提交路径：原子写入一次结果，**lesson 推进到 qa**（FUCK：我觉得不该耦合，这点须是交由模型处理，在第三阶段（前）搞掉），再结算等待中的IN-BAND展示
     async submit(cwd: string, kind: ArtifactKind, hash: string, runId: string, payload: unknown): Promise<{ result: ResultEnvelope; alreadySubmitted: boolean }> {
         const {files, run} = await this.requireRun(cwd, kind, hash, runId)
+
         const result: ResultEnvelope = {kind, targetId: run.targetId, artifactHash: hash, runId, submittedAt: new Date().toISOString(), payload}
         const wrote = await files.writeResultOnce(kind, hash, runId, result)
-        if (kind === 'lesson' && wrote) await this.setLessonState(cwd, run.targetId, 'qa')
+        if (kind === 'lesson' && wrote) await this.setLessonState(cwd, run.targetId, 'qa', false)
+
         const durable = wrote ? result : (await files.readResult(kind, hash, runId)) ?? result
         this.settlePending(runId, {kind: 'result', result: durable})
+
+        this.dataChanges.publish('learning', generateWorkspaceHashIdOf(cwd))
+
         return {result: durable, alreadySubmitted: !wrote}
     }
 
-    // 读取指定运行的结果，未给 runId 时读取工件最近一次已提交运行
+    // TIPS：读取指定运行的结果，未给 runId 时读取工件最近一次已提交运行
     async getResult(cwd: string, kind: ArtifactKind, hash: string, runId?: string): Promise<{ runId: string; result: ResultEnvelope } | null> {
         const files = this.filesFor(cwd)
+
         if (runId !== undefined) {
             const result = await files.readResult(kind, hash, runId)
             return result === null ? null : {runId, result}
@@ -425,6 +445,7 @@ export class LearningService extends Service {
 
         const latest = await files.latestSubmittedRun(kind, hash)
         if (latest === null) return null
+
         const result = await files.readResult(kind, hash, latest.runId)
         return result === null ? null : {runId: latest.runId, result}
     }
@@ -436,19 +457,28 @@ export class LearningService extends Service {
 
         const feedback: FeedbackEnvelope = {kind, targetId: run.targetId, artifactHash: hash, runId, savedAt: new Date().toISOString(), payload}
         await files.writeFeedback(kind, hash, runId, feedback)
+
+        this.dataChanges.publish('learning', generateWorkspaceHashIdOf(cwd))
+
         return feedback
     }
 
-    // ---------
+    // ---和复习好像有关系---
 
-    // 校验复习计划来源运行存在、已有结果且确实属于指定课程
+    // 校验复习计划**来源运行存在**（CHECK：什么鬼？）、已有结果且确实属于指定课程
     private async resolveSourceRun(cwd: string, kind: ArtifactKind, hash: string, runId: string, lessonId: string): Promise<ArtifactRun> {
         const files = this.filesFor(cwd)
+
         const run = await files.readRun(kind, hash, runId)
+
         if (run === null) throw new Error(`在 ${ARTIFACT_CATEGORY_BY_KIND[kind]}/${hash} 下找不到来源运行 ${runId}`)
+
         if (run.kind !== kind || run.artifactHash !== hash) throw new Error(`运行 ${runId} 不属于 ${ARTIFACT_CATEGORY_BY_KIND[kind]}/${hash}`)
+
         if (run.targetId !== lessonId) throw new Error(`运行 ${runId} 属于课程 ${run.targetId}，而非 ${lessonId}`)
-        if ((await files.readResult(kind, hash, runId)) === null) throw new Error(`运行 ${runId} 尚无结果——只能对已完成批改的运行进行评级`)
+
+        if ((await files.readResult(kind, hash, runId)) === null) throw new Error(`运行 ${runId} 尚无结果。只能对已完成批改的运行进行评级`)
+
         return run
     }
 
@@ -458,10 +488,13 @@ export class LearningService extends Service {
         await this.resolveSourceRun(cwd, sourceKind, sourceHash, sourceRunId, lessonId)
 
         const files = this.filesFor(cwd)
+
         const current = await files.readCard(lessonId)
         const card = current === null ? newCard() : current.card as unknown as Card
+
         const alreadyApplied = (current?.history ?? []).some(record => record.sourceRunId === sourceRunId)
         const next = nextCard(card, rating, Date.now())
+
         return {lessonId, rating, sourceRunId, ...(reason !== undefined && reason.length > 0 ? {reason} : {}), current, nextCard: next as unknown as Record<string, unknown>, due: next.due instanceof Date ? next.due.toISOString() : String(next.due), alreadyApplied}
     }
 
@@ -471,32 +504,44 @@ export class LearningService extends Service {
         await this.resolveSourceRun(cwd, sourceKind, sourceHash, sourceRunId, lessonId)
 
         const files = this.filesFor(cwd)
+
         const current = await files.readCard(lessonId)
+
         const history = current?.history ?? []
         if (history.some(record => record.sourceRunId === sourceRunId)) throw new Error(`来源运行 ${sourceRunId} 已应用到复习计划`)
 
         const card = current === null ? newCard() : current.card as unknown as Card
         const next = nextCard(card, rating, Date.now())
+
         const record: ReviewRecord = {at: new Date().toISOString(), rating, sourceRunId, ...(reason !== undefined && reason.length > 0 ? {reason} : {})}
         const cardFile: CardFile = {lessonId, card: next as unknown as Record<string, unknown>, history: [...history, record]}
+
         await files.writeCard(cardFile)
+
+        this.dataChanges.publish('learning', generateWorkspaceHashIdOf(cwd))
+
         return cardFile
     }
 
-    // ---------
+    // ---工作区相关----
 
-    // 读取一个工作区的只读学习状态；会话激活纲目由调用方传入，不属于工作区事实
-    async snapshot(cwd: string, activeOutlineId: string | null): Promise<LearningSnapshot> {
+    // 读取一个学习工作区的状态（只读）；会话激活纲目**由调用方传入**。THINKING：可能需要整理代码
+    async snapshotLearningWorkspaceState(cwd: string, activeOutlineId: string | null): Promise<LearningSnapshot> {
         const files = this.filesFor(cwd)
+
         recordWorkspaceHashIdByGeneratingItFromItsCwd(cwd)
+
         const exists = await files.currentIsLearningWorkspace()
         const outlines = await files.listOutlines()
         const activeOutline = outlines.find(outline => outline.id === activeOutlineId) ?? null
+
         const lessonTitle = new Map<string, string>()
         for (const outline of outlines) for (const node of outline.nodes) if (node.kind === 'lesson' && node.lessonId !== undefined) lessonTitle.set(node.lessonId, node.title)
 
         const currentLessons = (activeOutline?.nodes ?? []).filter(node => node.kind === 'lesson' && (node.state === 'learning' || node.state === 'qa') && node.lessonId !== undefined).map(node => ({id: node.lessonId as string, title: node.title, state: node.state as 'learning' | 'qa'}))
+
         const now = Date.now()
+
         const dueCards = (await files.listCards()).map(cardFile => {
             const card = cardFile.card as unknown as Card
             const due = typeof card.due === 'string' ? Date.parse(card.due) : card.due instanceof Date ? card.due.getTime() : 0

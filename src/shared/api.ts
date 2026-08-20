@@ -41,22 +41,26 @@ export interface NotesDto {
   readonly notes: readonly Note[]
 }
 
-// 学习状态接口响应
-export interface LearningStateDto {
-  readonly workspaceId: string
-  readonly cwd: string
-  readonly learningDirExists: boolean
+// 学习数据接口响应，只包含学习内容，不携带工作区身份与能力
+export interface LearningDataDto {
   readonly outlines: readonly OutlineDto[]
   readonly cards: readonly CardDto[]
   readonly lessons: readonly ArtifactDto[]
   readonly reviews: readonly ArtifactDto[]
   readonly quizzes: readonly ArtifactDto[]
-  readonly notes: NotesDto
+}
+
+// 数据变更 SSE 中的单条事件
+export interface DataChangeDto {
+  readonly id: number
+  readonly channel: 'workspace' | 'learning' | 'notes' | 'reset'
+  readonly workspaceId?: string
 }
 
 // 工作区存在性探测接口响应
 export interface LearningWorkspaceDto {
   readonly cwd: string
+  readonly workspaceId: string
   readonly isLearningWorkspace: boolean
 }
 

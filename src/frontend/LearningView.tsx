@@ -5,7 +5,7 @@ import clsx from 'clsx'
 import {Button, IconRefreshOutline14, Modal} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {LearningViewProps} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {ArtifactDto, CardDto, LearningStateDto, OutlineDto} from '../shared/api.ts'
+import type {ArtifactDto, CardDto, LearningDataDto, OutlineDto} from '../shared/api.ts'
 import type {LessonState, OutlineNode} from '../shared/model.ts'
 import css from './LearningView.module.css'
 
@@ -48,7 +48,7 @@ interface ViewFace {
 }
 
 // 渲染纲目子页签
-function OutlinesTab({state, activeOutlineId, t}: { state: LearningStateDto, activeOutlineId: string | null } & Pick<LearningViewProps, 't'>) {
+function OutlinesTab({state, activeOutlineId, t}: { state: LearningDataDto, activeOutlineId: string | null } & Pick<LearningViewProps, 't'>) {
     const outlines = state.outlines
 
     return (
@@ -93,7 +93,7 @@ function OutlineBlock({outline, active, t}: { outline: OutlineDto, active: boole
 }
 
 // 渲染复习或小测子页签，复习页额外展示复习卡片
-function ArtifactsTab({kind, state, face}: { kind: 'reviews' | 'quizzes'; state: LearningStateDto; face: ViewFace }) {
+function ArtifactsTab({kind, state, face}: { kind: 'reviews' | 'quizzes'; state: LearningDataDto; face: ViewFace }) {
     const {t} = face
     const artifacts = kind === 'reviews' ? state.reviews : state.quizzes
     const cards = kind === 'reviews' ? state.cards : null
@@ -171,7 +171,7 @@ function ArtifactRow({artifact, category, face}: { artifact: ArtifactDto; catego
 export function LearningView(props: LearningViewProps) {
     const {api, useLearning, useProjection, useStore, actions, t, sessionId} = props
     const learning = useLearning(s => s.learning)
-    const state = learning.state
+    const state = learning.data
     const projection = useProjection('dvlLearning') ?? {entered: false, activeOutlineId: null}
     const tab = useStore(s => s.tab)
     const preview = useStore(s => s.preview)

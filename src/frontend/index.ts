@@ -4,17 +4,17 @@ import type {ClientContext, SessionId} from '@deepseek-ai/dsh-client-runtime/cli
 import {createSnapshotStore, type SnapshotStore} from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client' // 仅用于合并 ctx.locale 的 Context 类型
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于合并 conversation.view、header utilities 等 SlotMap 类型
-import type {BoundActions} from '@deepseek-ai/dsh-client-ui-slots'
-import {artifactUrl, buildNotesActions, fetchLearningWorkspace, fetchNotes, fetchState, inbandPresent, resolveDescriptor} from './api.ts'
+import {artifactUrl, buildNotesActions, fetchLearningData, fetchLearningWorkspace, fetchNotes, inbandPresent, openDataChangeStream, resolveDescriptor} from './api.ts'
 import type {LearningApi, LearningViewInject, NotesActions, NotesCardInject, PresentToolViewInject} from './contract.ts'
 import {LearningView} from './LearningView.tsx'
 import {en, NS, zh} from './locales.ts'
 import {NotesCard} from './NotesCard.tsx'
 import {OutlineCard} from './OutlineCard.tsx'
 import {InBandPresentArtifactView} from './InBandPresentArtifactView.tsx'
-import {createDvlViewStore, idleLearningDomain, idleNotesDomain} from './stores.ts'
+import {createDvlViewStore, idleLearningDomain, idleNotesDomain, idleWorkspaceDomain} from './stores.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {LearningDomain, NotesDomain} from './state.ts'
+import type {DataChangeDto} from '../shared/api.ts'
+import type {LearningSourceState, NotesSourceState, WorkspaceSourceState} from './state.ts'
 
 // 必需服务，目标 slot 由 ui-conversation 声明，因此 apply 会通过 slots.inject 等待它们
 export const inject = ['slots', 'sessions', 'workspaces', 'locale']
@@ -30,12 +30,6 @@ interface SessionListSnapshot {
     readonly byId?: Record<string, SessionRow>
 }
 
-// 学习域 hooks 数据源快照
-type LearningSourceState = { readonly learning: LearningDomain }
-
-// 笔记域 hooks 数据源快照
-type NotesSourceState = { readonly notes: NotesDomain }
-
 // 注册学习视图与两张常驻面板，并维护对应的数据生命周期。前端的 Cordis
 export function apply(ctx: ClientContext): void {
     ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'dvl: dictionaries')
@@ -46,7 +40,7 @@ export function apply(ctx: ClientContext): void {
     // 数据源：引擎快照 store 经 hooks 通道提供给组件
     const learningSource: SnapshotStore<LearningSourceState> = createSnapshotStore({learning: idleLearningDomain()})
     const notesSource: SnapshotStore<NotesSourceState> = createSnapshotStore({notes: idleNotesDomain()})
-    const workspaceSource: SnapshotStore<{ isLearningWorkspace: boolean }> = createSnapshotStore({isLearningWorkspace: false})
+    const workspaceSource: SnapshotStore<WorkspaceSourceState> = createSnapshotStore({workspace: idleWorkspaceDomain()})
 
     // 解析会话所属工作区 cwd，优先使用会话头，缺失时回退到工作区列表。FUCK：和getCurrentSessionCwdOrNull有作用重叠
     const getCwdOrNullBySessionId = (sessionId: SessionId): string | null => {
@@ -90,25 +84,26 @@ export function apply(ctx: ClientContext): void {
         try {
             const workspace = await fetchLearningWorkspace(cwd)
             if (generation !== workspaceGeneration) return
-            workspaceSource.set({isLearningWorkspace: workspace.isLearningWorkspace})
+            workspaceSource.set({workspace: {cwd, workspaceId: workspace.workspaceId, isLearningWorkspace: workspace.isLearningWorkspace}})
         } catch (error: unknown) {
             if (generation !== workspaceGeneration) return
-            workspaceSource.set({isLearningWorkspace: false})
+            workspaceSource.set({workspace: {cwd, workspaceId: null, isLearningWorkspace: false}})
         }
     }
 
     // 按 cwd 加载学习域，generation 用于丢弃旧 cwd 的迟到响应
     let learningGeneration = 0
-    const loadLearning = async (cwd: string): Promise<void> => {
+    const loadLearningData = async (cwd: string): Promise<void> => {
         const generation = ++learningGeneration
+
         const previous = learningSource.getSnapshot().learning
         learningSource.set({learning: {...previous, phase: 'loading'}})
 
         try {
-            const state = await fetchState(cwd)
+            const data = await fetchLearningData(cwd)
             if (generation !== learningGeneration) return
 
-            learningSource.set({learning: {phase: 'ready', state, isLearningWorkspace: state.learningDirExists, error: null}})
+            learningSource.set({learning: {phase: 'ready', data, error: null}})
         } catch (error: unknown) {
             if (generation !== learningGeneration) return
 
@@ -116,7 +111,7 @@ export function apply(ctx: ClientContext): void {
             const unknownWorkspace = message.includes('404') && message.includes('未知的工作区')
 
             if (unknownWorkspace) {
-                learningSource.set({learning: {phase: 'idle', state: null, isLearningWorkspace: false, error: null}})
+                learningSource.set({learning: {phase: 'idle', data: null, error: null}})
                 return
             }
 
@@ -140,8 +135,7 @@ export function apply(ctx: ClientContext): void {
             lastCwd = cwd
 
             if (cwd === null) {
-                learningSource.set({learning: {phase: 'idle', state: null, isLearningWorkspace: false, error: null}})
-                workspaceSource.set({isLearningWorkspace: false})
+                workspaceSource.set({workspace: idleWorkspaceDomain()})
             } else void loadLearningWorkspace(cwd)
         }
 
@@ -155,59 +149,51 @@ export function apply(ctx: ClientContext): void {
 
     // 构造单个会话使用的学习 API，包括刷新、展示和工件 URL
     const makeApi = (sessionId: SessionId): LearningApi => {
-        let workspaceId: string | null = null
-
         const refresh = async (): Promise<void> => {
             const cwd = getCwdOrNullBySessionId(sessionId)
-            if (cwd === null) throw new Error('DVL：当前会话没有工作区 cwd')
+            if (cwd === null) throw new Error('DVL（前端）：当前会话没有工作区 cwd')
 
-            const state = await fetchState(cwd)
-            workspaceId = state.workspaceId
-            learningSource.set({learning: {phase: 'ready', state, isLearningWorkspace: state.learningDirExists, error: null}})
+            await loadLearningData(cwd)
         }
 
         const ensureWorkspaceId = async (): Promise<string | null> => {
-            if (workspaceId !== null) return workspaceId
-
             const cwd = getCwdOrNullBySessionId(sessionId)
             if (cwd === null) return null
 
-            const current = learningSource.getSnapshot().learning.state
-            if (current?.cwd === cwd) {
-                workspaceId = current.workspaceId
-                return workspaceId
-            }
+            const workspace = workspaceSource.getSnapshot().workspace
+            if (workspace.cwd === cwd && workspace.workspaceId !== null) return workspace.workspaceId
 
-            await refresh()
-            return workspaceId
+            await loadLearningWorkspace(cwd)
+            const next = workspaceSource.getSnapshot().workspace
+            return next.cwd === cwd ? next.workspaceId : null
         }
 
         const knownWorkspaceId = (): string => {
-            if (workspaceId !== null) return workspaceId
             const cwd = getCwdOrNullBySessionId(sessionId)
-            const state = learningSource.getSnapshot().learning.state
-            return cwd !== null && state?.cwd === cwd ? state.workspaceId : ''
+            const workspace = workspaceSource.getSnapshot().workspace
+            return cwd !== null && workspace.cwd === cwd ? workspace.workspaceId ?? '' : ''
         }
 
         const urlFor = (category: ArtifactCategory, hash: string): string => artifactUrl(knownWorkspaceId(), category, hash)
 
         return {
             refresh,
+
             inbandPresent: async (category, hash, targetSessionId) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
                 return inbandPresent(ws, category, hash, targetSessionId)
             },
+
             openArtifact: (category, hash) => {
                 window.open(urlFor(category, hash), '_blank', 'noopener')
             },
+
             artifactUrl: urlFor,
         }
     }
 
-    const makeNotes = (): NotesActions => buildNotesActions(refreshNotes)
-
-    // THINKING：以上没太看
+    const makeNotes = (): NotesActions => buildNotesActions()
 
     // TIPS：当前选中会话的 cwd；无工作区时返回 null
     const getCurrentSessionCwdOrNull = (): string | null => {
@@ -217,17 +203,60 @@ export function apply(ctx: ClientContext): void {
         return row?.cwd !== undefined && row.cwd !== '' ? row.cwd : null
     }
 
+    // 订阅后端数据失效信号，只触发重新拉取，不在前端推导第二套业务状态
+    ctx.effect(() => {
+        const onChange = (change: DataChangeDto): void => {
+            if (change.channel === 'notes') { void refreshNotes(); return }
+            if (change.channel === 'reset') {
+                const cwd = getCurrentSessionCwdOrNull()
+                if (cwd !== null) void loadLearningWorkspace(cwd)
+                void refreshNotes()
+                return
+            }
+            const workspace = workspaceSource.getSnapshot().workspace
+            if (change.workspaceId !== workspace.workspaceId) return
+
+            const cwd = getCurrentSessionCwdOrNull()
+            if (cwd === null) return
+            if (change.channel === 'workspace') void loadLearningWorkspace(cwd)
+            else if (workspace.isLearningWorkspace) void loadLearningData(cwd)
+        }
+
+        const source = openDataChangeStream(onChange)
+        return () => source.close()
+    }, 'dvl: data change subscriber')
+
+    // 学习数据控制器：只看工作区域能力；能力变化时加载或重置学习内容
+    ctx.effect(() => {
+        let lastIdentity: string | null = null
+
+        const evaluate = (): void => {
+            const workspace = workspaceSource.getSnapshot().workspace
+            const identity = `${workspace.cwd ?? ''}|${workspace.workspaceId ?? ''}|${workspace.isLearningWorkspace}`
+            if (identity === lastIdentity) return
+
+            lastIdentity = identity
+            if (workspace.cwd === null || !workspace.isLearningWorkspace) {
+                learningSource.set({learning: idleLearningDomain()})
+                return
+            }
+
+            void loadLearningData(workspace.cwd)
+        }
+
+        const disposer = workspaceSource.subscribe(evaluate)
+        evaluate()
+        return disposer
+    }, 'dvl: learning data controller')
+
     // TIPS：学习 tab：【订阅 workspaceSource】，并根据当前工作区动态注册或注销
     ctx.effect(() => {
         let viewDisposer: (() => void) | null = null
 
         const evaluate = (): void => {
-            const isLearningWorkspace = workspaceSource.getSnapshot().isLearningWorkspace
+            const isLearningWorkspace = workspaceSource.getSnapshot().workspace.isLearningWorkspace
 
             if (isLearningWorkspace && viewDisposer === null) {
-                const cwd = getCurrentSessionCwdOrNull()
-                if (cwd !== null) void loadLearning(cwd)
-
                 // 注册UI槽位
                 viewDisposer = ctx.slots.inject('conversation.view', () => ctx.slots.register({
                     name: 'conversation.view', id: 'vibe-learning', order: 20, locale: NS, label: () => t('view.label'), store,
@@ -240,12 +269,10 @@ export function apply(ctx: ClientContext): void {
         }
 
         const unsubscribe = workspaceSource.subscribe(evaluate)
-        const unsubscribeSessions = ctx.sessions.list.subscribe(evaluate)
         evaluate()
 
         return () => {
             unsubscribe()
-            unsubscribeSessions()
             viewDisposer?.()
         }
     }, 'dvl: learning view tab')

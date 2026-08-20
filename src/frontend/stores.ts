@@ -2,9 +2,9 @@
 
 import {defineStore, type EngineStoreHandle} from '@deepseek-ai/dsh-client-runtime/client'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {LearningDomain, NotesDomain} from './state.ts'
+import type {LearningDomain, NotesDomain, WorkspaceDomain} from './state.ts'
 
-export type {LearningDomain, NotesDomain} from './state.ts'
+export type {LearningDomain, NotesDomain, WorkspaceDomain} from './state.ts'
 
 // 当前正在运行的 present，通过 DSH 工具 callId 观测
 export interface PresentRunEntry {
@@ -47,10 +47,13 @@ export function createDvlViewStore(): EngineStoreHandle<DvlViewState, DvlViewAct
 // ---
 
 // 生成学习域初始值
-export function idleLearningDomain(): LearningDomain { return {phase: 'idle', state: null, isLearningWorkspace: false, error: null} }
+export function idleWorkspaceDomain(): WorkspaceDomain { return {cwd: null, workspaceId: null, isLearningWorkspace: false} }
+
+// 生成学习域初始值
+export function idleLearningDomain(): LearningDomain { return {phase: 'idle', data: null, error: null} }
 
 // 生成笔记域初始值
 export function idleNotesDomain(): NotesDomain { return {phase: 'idle', notes: null, error: null} }
 
 // 再导出与 DTO 放在同一文件中的数据域类型
-export type {LearningStateDto, NotesDto} from '../shared/api.ts'
+export type {LearningDataDto, NotesDto} from '../shared/api.ts'

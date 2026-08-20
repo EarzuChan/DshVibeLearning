@@ -172,7 +172,7 @@ export class LearningFiles {
         }
     }
 
-    // **确认**学习工作区与指定会话纲目可用。不创建、不修复、不覆盖语义数据
+    // **确认**学习工作区与指定会话纲目可用。不创建、不修复、不覆盖语义数据。FUCK：有问题的钢木可能会搞坏整个系统（因为这个回调每 turn 都会运行，而且一旦不通过就直接报错，Model 没办法继续工作来修复。其实这个报错不应该直接抛出，应该把它报给 Agent，让 Agent 来处理）
     async requireCurrentLearningWorkspaceAndAllOutlinesReallyAvailable(additionalRequiredOutlineId: string | null) {
         await this.requireCurrentLearningWorkspaceAvailable()
 

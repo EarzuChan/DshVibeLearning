@@ -204,7 +204,7 @@ export function installLearningTools(rootCtx: Context, toolCtx: Context, agent: 
         presentCall: () => genericCard('Read outline', 'read')
     })))
 
-    // ── update_outline 工具 ──
+    // ── update_outline 工具 ──。FIXME：这玩意儿有问题。如果工件存在问题，虽然用户 confirmed，但它这个依然有问题，所以可能会导致之后出现问题
     disposers.push(toolCtx.tools.register(defineTool({
         name: 'update_outline',
         description: 'Create or replace an outline (syllabus) of the current workspace. Omit outline_id to create a new one. The tool itself asks the user to confirm the write before it lands; the return value is confirmed (with the saved outline) / cancelled / error. Lesson node states advance through this same tool: set state to done when Q&A closes. Preserve node ids, lesson ids, artifactHash and state of unchanged lessons — the plugin reuses artifacts by content hash and clears orphans automatically.',

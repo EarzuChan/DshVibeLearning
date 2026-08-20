@@ -2,7 +2,7 @@
 
 import type {NotesActions} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {InbandPresentRequest, InbandPresentResult, LearningStateDto, LearningWorkspaceDto, NotesDto, PresentArtifactDescriptor} from '../shared/api.ts'
+import type {DataChangeDto, InbandPresentRequest, InbandPresentResult, LearningDataDto, LearningWorkspaceDto, NotesDto, PresentArtifactDescriptor} from '../shared/api.ts'
 import {LEARNING_ROUTE_PREFIX} from '../shared/routes.ts'
 
 // 执行 JSON GET/POST 请求，非 2xx 时抛出错误
@@ -11,17 +11,24 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
-    throw new Error(`DVL：请求失败 ${response.status} ${response.statusText} ${detail}`.trim())
+    throw new Error(`DVL（前端）请求失败 ${response.status} ${response.statusText} ${detail}`.trim())
   }
 
   return await response.json() as Promise<T>
 }
 
 // 获取指定工作区 cwd 的完整学习状态
-export function fetchState(cwd: string): Promise<LearningStateDto> { return requestJson<LearningStateDto>(`${LEARNING_ROUTE_PREFIX}/api/state?cwd=${encodeURIComponent(cwd)}`) }
+export function fetchLearningData(cwd: string): Promise<LearningDataDto> { return requestJson<LearningDataDto>(`${LEARNING_ROUTE_PREFIX}/api/state?cwd=${encodeURIComponent(cwd)}`) }
 
 // 仅探测当前 cwd 是否为学习工作区，不读取纲目、工件或卡片
 export function fetchLearningWorkspace(cwd: string): Promise<LearningWorkspaceDto> { return requestJson<LearningWorkspaceDto>(`${LEARNING_ROUTE_PREFIX}/api/workspace?cwd=${encodeURIComponent(cwd)}`) }
+
+// 创建数据失效流；调用方负责关闭，断线由浏览器 EventSource 自行重连
+export function openDataChangeStream(onChange: (change: DataChangeDto) => void): EventSource {
+  const source = new EventSource(`${LEARNING_ROUTE_PREFIX}/api/changes`)
+  source.onmessage = event => onChange(JSON.parse(event.data) as DataChangeDto)
+  return source
+}
 
 // 发起带内展示请求并返回服务端结束结果
 export function inbandPresent(workspaceId: string, category: ArtifactCategory, hash: string, sessionId: string): Promise<InbandPresentResult> {
@@ -41,12 +48,9 @@ export async function resolveDescriptor(cwd: string, callId: string): Promise<Pr
 // 获取不依赖工作区的全局笔记快照
 export function fetchNotes(): Promise<NotesDto> { return requestJson<NotesDto>(`${LEARNING_ROUTE_PREFIX}/api/notes`) }
 
-// 构造笔记 CRUD 操作接口，每次写入后重新获取笔记快照以保持界面同步
-export function buildNotesActions(refresh: () => Promise<void>): NotesActions {
-  const post = async (body: Record<string, unknown>): Promise<void> => {
-    await requestJson<{ok?: boolean}>(`${LEARNING_ROUTE_PREFIX}/api/notes`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
-    await refresh()
-  }
+// 构造笔记 CRUD 操作接口，写入后的界面同步统一由后端变更流触发
+export function buildNotesActions(): NotesActions {
+  const post = async (body: Record<string, unknown>): Promise<void> => { await requestJson<{ok?: boolean}>(`${LEARNING_ROUTE_PREFIX}/api/notes`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}) }
 
   return {
     addFolder: name => post({action: 'folder:add', name}),

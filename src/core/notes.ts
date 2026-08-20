@@ -16,7 +16,7 @@ export class NotesStore {
     private db: NotesDb = {folders: [], notes: []}
     private tail = Promise.resolve()
 
-    constructor(private readonly dataDir: string) {
+    constructor(private readonly dataDir: string, private readonly onChanged: () => void = () => {}) {
     }
 
     private get file(): string {
@@ -64,6 +64,7 @@ export class NotesStore {
         const folder: NoteFolder = {id: randomUUID(), name: trimmed, createdAt: new Date().toISOString()}
         this.db = {folders: [...this.db.folders, folder], notes: this.db.notes}
         await this.save()
+        this.onChanged()
 
         return folder
     }
@@ -77,11 +78,13 @@ export class NotesStore {
 
         this.db = {folders: this.db.folders.map(item => item.id === folderId ? {...item, name: trimmed} : item), notes: this.db.notes}
         await this.save()
+        this.onChanged()
     }
 
     async deleteFolder(folderId: string): Promise<void> {
         this.db = {folders: this.db.folders.filter(item => item.id !== folderId), notes: this.db.notes.filter(item => item.folderId !== folderId)}
         await this.save()
+        this.onChanged()
     }
 
     // ---笔记---
@@ -93,6 +96,7 @@ export class NotesStore {
         const note: Note = {id: randomUUID(), folderId: input.folderId, title: input.title.trim() || '未命名笔记', markdown: input.markdown, tags: [...new Set(input.tags)], access: input.access, createdAt: now, updatedAt: now}
         this.db = {folders: this.db.folders, notes: [...this.db.notes, note]}
         await this.save()
+        this.onChanged()
 
         return note
     }
@@ -105,6 +109,7 @@ export class NotesStore {
         const updated: Note = {...note, ...patch.title !== undefined ? {title: patch.title.trim() || note.title} : {}, ...patch.markdown !== undefined ? {markdown: patch.markdown} : {}, ...patch.tags !== undefined ? {tags: [...new Set(patch.tags)]} : {}, ...patch.access !== undefined ? {access: patch.access} : {}, ...patch.folderId !== undefined ? {folderId: patch.folderId} : {}, updatedAt: new Date().toISOString()}
         this.db = {folders: this.db.folders, notes: this.db.notes.map(item => item.id === noteId ? updated : item)}
         await this.save()
+        this.onChanged()
 
         return updated
     }
@@ -112,6 +117,7 @@ export class NotesStore {
     async deleteNote(noteId: string): Promise<void> {
         this.db = {folders: this.db.folders, notes: this.db.notes.filter(item => item.id !== noteId)}
         await this.save()
+        this.onChanged()
     }
 
     getNote(noteId: string): Note | undefined {
