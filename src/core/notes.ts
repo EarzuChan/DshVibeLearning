@@ -16,8 +16,7 @@ export class NotesStore {
     private db: NotesDb = {folders: [], notes: []}
     private tail = Promise.resolve()
 
-    constructor(private readonly dataDir: string, private readonly onChanged: () => void = () => {}) {
-    }
+    constructor(private readonly dataDir: string, private readonly onChanged: () => void = () => {}) {}
 
     private get file(): string {
         return join(this.dataDir, 'notes.json')
@@ -123,6 +122,8 @@ export class NotesStore {
     getNote(noteId: string): Note | undefined {
         return this.db.notes.find(item => item.id === noteId)
     }
+
+    // ---模型面专属---
 
     // 模型面按 tag 筛选笔记，并排除 private 笔记
     // THINKING：如果笔记没有tag，还能被筛选到吗？我觉得最好可能是：如果没有 tag 就直接收集，如果有 tag 再去筛选有没有目标 tag。

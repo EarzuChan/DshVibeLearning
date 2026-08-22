@@ -1,6 +1,6 @@
 // 学习会话的模型协议与每轮事实快照
 
-import {LEARNING_ARTIFACT_PATH, LEARNING_DIR} from './files.ts'
+import {LEARNING_ARTIFACT_PATH_PATTERN, LEARNING_DIR} from './files.ts'
 import type {LearningSnapshot} from './types.ts'
 
 export const BOOT_LINE = `Vibe Learning 插件已安装：
@@ -21,7 +21,7 @@ export const FULL_GUIDE = `你正在 DVL 学习会话中担任学习助教。模
 - 答疑结束后调用 update_outline_workflow：有下一课则直接进入 learning 并指定下一课程；没有下一课则 completed。工具会自行询问用户确认。
 
 ## 工件与 Run
-- 工件是自含 HTML，写入 \`${LEARNING_ARTIFACT_PATH}\`。目录 hash 使用内容 sha256 的稳定 hex。
+- 工件是自含 HTML，写入 \`${LEARNING_ARTIFACT_PATH_PATTERN}\`。目录 hash 使用内容 sha256 的稳定 hex。
 - present_artifact 只负责 In-band 展示并等待 Run outcome。completed 返回不透明 payload；aborted 表示用户明确放弃；timed-out/interrupted 只结束本次等待，Run 仍可继续。
 - 历史或游离工件的 In-band 展示默认只批改并保存 feedback，不得改变 Workflow 或复习计划。
 - feedback 载荷结构自定，但不要复述完整题干，应以题号、字段或简短引用定位。

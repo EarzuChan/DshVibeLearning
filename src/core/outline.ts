@@ -3,7 +3,7 @@
 import {randomUUID} from 'node:crypto'
 import type {Outline, OutlineNode, OutlinePhase, OutlineWorkflow} from '../shared/model.ts'
 import {isValidArtifactHash, LearningFiles, listJsonFiles, readJson, removePath, writeJson} from './files.ts'
-import {isSafeSegment} from './identifiers.ts'
+import {isSafeSegment} from '../util/identifiers.ts'
 
 export interface OutlineInput {
     readonly title: string
@@ -85,6 +85,7 @@ export class OutlineStore {
             confirmOutline(outline)
             outlines.push(outline)
         }
+
         return outlines.sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'))
     }
 
@@ -125,6 +126,7 @@ export class OutlineStore {
 
         const current = outline.workflow
         const completed = new Set(current.completedLessonIds)
+
         if (phase === 'learning') {
             if (currentLessonId === null || findOutlineLesson(outline, currentLessonId)?.kind !== 'lesson') throw new Error(`下一课程不存在：${currentLessonId ?? 'null'}`)
             if (current.phase === 'qa' && current.currentLessonId !== null) completed.add(current.currentLessonId)
@@ -140,8 +142,11 @@ export class OutlineStore {
 
         const workflow: OutlineWorkflow = {phase, currentLessonId, completedLessonIds: [...completed]}
         const updated = {...outline, workflow}
+
         confirmOutline(updated)
+
         await this.write(updated)
+
         return updated
     }
 

@@ -14,6 +14,7 @@ import {InBandPresentArtifactView} from './InBandPresentArtifactView.tsx'
 import {createDvlViewStore, idleLearningDomain, idleNotesDomain, idleWorkspaceDomain} from './stores.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
 import type {DataChangeDto} from '../shared/api.ts'
+import {CORDIS_EFFECT_DATA_CHANGE_SUBSCRIBER, CORDIS_EFFECT_DICTIONARIES, CORDIS_EFFECT_LEARNING_DATA_CONTROLLER, CORDIS_EFFECT_LEARNING_VIEW_TAB, CORDIS_EFFECT_LIFECYCLE_CONTROLLER, CORDIS_SLOT_CONVERSATION_VIEW, CORDIS_SLOT_SESSION_HEADER_UTILITIES, CORDIS_SLOT_TOOL_CALL_TOOLVIEW, LEARNING_NOTES_CARD_ID, LEARNING_OUTLINE_CARD_ID, LEARNING_VIEW_ID} from '../shared/constants.ts'
 import type {LearningSourceState, NotesSourceState, WorkspaceSourceState} from './state.ts'
 
 // 必需服务，目标 slot 由 ui-conversation 声明，因此 apply 会通过 slots.inject 等待它们
@@ -32,7 +33,7 @@ interface SessionListSnapshot {
 
 // 注册学习视图与两张常驻面板，并维护对应的数据生命周期。前端的 Cordis
 export function apply(ctx: ClientContext): void {
-    ctx.effect(() => ctx.locale.register(NS, {zh, en}), 'dvl: dictionaries')
+    ctx.effect(() => ctx.locale.register(NS, {zh, en}), CORDIS_EFFECT_DICTIONARIES)
 
     const t = ctx.locale.bind(NS)
     const store = createDvlViewStore()
@@ -145,7 +146,7 @@ export function apply(ctx: ClientContext): void {
         evaluate()
 
         return disposer
-    }, 'dvl: lifecycle controller')
+    }, CORDIS_EFFECT_LIFECYCLE_CONTROLLER)
 
     // 构造单个会话使用的学习 API，包括刷新、展示和工件 URL
     const makeApi = (sessionId: SessionId): LearningApi => {
@@ -249,7 +250,7 @@ export function apply(ctx: ClientContext): void {
 
         const source = openDataChangeStream(onChange)
         return () => source.close()
-    }, 'dvl: data change subscriber')
+    }, CORDIS_EFFECT_DATA_CHANGE_SUBSCRIBER)
 
     // 学习数据控制器：只看工作区域能力；能力变化时加载或重置学习内容
     ctx.effect(() => {
@@ -272,19 +273,20 @@ export function apply(ctx: ClientContext): void {
         const disposer = workspaceSource.subscribe(evaluate)
         evaluate()
         return disposer
-    }, 'dvl: learning data controller')
+    }, CORDIS_EFFECT_LEARNING_DATA_CONTROLLER)
 
     // TIPS：学习 tab：【订阅 workspaceSource】，并根据当前工作区动态注册或注销
     ctx.effect(() => {
         let viewDisposer: (() => void) | null = null
 
         const evaluate = (): void => {
+            // 是学习工作区就挂，反之消
             const isLearningWorkspace = workspaceSource.getSnapshot().workspace.isLearningWorkspace
 
             if (isLearningWorkspace && viewDisposer === null) {
                 // 注册UI槽位
-                viewDisposer = ctx.slots.inject('conversation.view', () => ctx.slots.register({
-                    name: 'conversation.view', id: 'vibe-learning', order: 20, locale: NS, label: () => t('view.label'), store,
+                viewDisposer = ctx.slots.inject(CORDIS_SLOT_CONVERSATION_VIEW, () => ctx.slots.register({
+                    name: CORDIS_SLOT_CONVERSATION_VIEW, id: LEARNING_VIEW_ID, order: 20, locale: NS, label: () => t('view.label'), store,
                     inject: (sessionId, _): LearningViewInject => ({api: makeApi(sessionId), notes: makeNotes(), hooks: {learning: learningSource}}),
                 }, LearningView))
             } else if (!isLearningWorkspace && viewDisposer !== null) {
@@ -300,24 +302,24 @@ export function apply(ctx: ClientContext): void {
             unsubscribe()
             viewDisposer?.()
         }
-    }, 'dvl: learning view tab')
+    }, CORDIS_EFFECT_LEARNING_VIEW_TAB)
 
     // TIPS：两张面板【常驻注册】，具体显隐由组件根据 projection 与域状态决定
     // TODO：改到更好的挂载点
 
-    ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-        name: 'conversation.session.header.utilities', id: 'vibe-learning-outline-card', order: 30, locale: NS, store,
+    ctx.slots.inject(CORDIS_SLOT_SESSION_HEADER_UTILITIES, () => ctx.slots.register({
+        name: CORDIS_SLOT_SESSION_HEADER_UTILITIES, id: LEARNING_OUTLINE_CARD_ID, order: 30, locale: NS, store,
         inject: (): { hooks: { learning: SnapshotStore<LearningSourceState> } } => ({hooks: {learning: learningSource}}),
     }, OutlineCard))
 
-    ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-        name: 'conversation.session.header.utilities', id: 'vibe-learning-notes-card', order: 40, locale: NS, store,
+    ctx.slots.inject(CORDIS_SLOT_SESSION_HEADER_UTILITIES, () => ctx.slots.register({
+        name: CORDIS_SLOT_SESSION_HEADER_UTILITIES, id: LEARNING_NOTES_CARD_ID, order: 40, locale: NS, store,
         inject: (): { card: NotesCardInject, hooks: { notes: SnapshotStore<NotesSourceState> } } => ({card: {notes: makeNotes()}, hooks: {notes: notesSource}}),
     }, NotesCard))
 
     // TIPS：挂载 IN-BAND工件展现 视图
-    ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
-        name: 'tool.call.toolview', key: 'present_artifact', locale: NS, store,
+    ctx.slots.inject(CORDIS_SLOT_TOOL_CALL_TOOLVIEW, () => ctx.slots.register({
+        name: CORDIS_SLOT_TOOL_CALL_TOOLVIEW, key: 'present_artifact', locale: NS, store,
         inject: (): PresentToolViewInject => ({resolveDescriptor: (cwd, callId) => resolveDescriptor(cwd, callId), abortRun: async descriptor => abortRun(descriptor.workspaceId, descriptor.kind === 'lesson' ? 'lessons' : descriptor.kind === 'review' ? 'reviews' : 'quizzes', descriptor.hash, descriptor.runId)}),
     }, InBandPresentArtifactView))
 }

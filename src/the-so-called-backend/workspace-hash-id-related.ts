@@ -1,7 +1,7 @@
 // 工件哈希ID注册表
 
 import type {Context} from '@deepseek-ai/cordis'
-import {generateWorkspaceHashIdOf} from '../core/identifiers.ts'
+import {generateWorkspaceHashIdOf} from '../util/identifiers.ts'
 
 const workspaceHashIdToWorkspaceCwd = new Map<string, string>()
 

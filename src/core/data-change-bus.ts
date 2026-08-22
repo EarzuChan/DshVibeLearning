@@ -19,17 +19,24 @@ export class DataChangeBus {
   private readonly recent: DataChange[] = []
 
   publish(channel: 'workspace' | 'learning', workspaceId: string): DataChange
+
   publish(channel: 'notes'): DataChange
+
   publish(channel: DataChangeChannel, workspaceId?: string): DataChange {
     const change: DataChange = {id: this.nextId++, channel, ...(workspaceId === undefined ? {} : {workspaceId})}
+
     this.recent.push(change)
+
     if (this.recent.length > BUFFER_SIZE) this.recent.shift()
+
     for (const listener of this.listeners) listener(change)
+
     return change
   }
 
   subscribe(listener: (change: DataChange) => void): () => void {
     this.listeners.add(listener)
+
     return () => { this.listeners.delete(listener) }
   }
 
@@ -37,6 +44,7 @@ export class DataChangeBus {
   eventsSince(lastId: number): DataChange[] | null {
     if (lastId < 0 || lastId > this.currentId()) return null
     if (this.currentId() - lastId > BUFFER_SIZE) return null
+
     return this.recent.filter(change => change.id > lastId)
   }
 

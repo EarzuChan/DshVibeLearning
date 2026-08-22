@@ -5,10 +5,14 @@ import {link, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile} fro
 import {dirname, join, resolve, sep} from 'node:path'
 import type {ArtifactHash, ArtifactKind, ArtifactTarget} from '../shared/artifacts.ts'
 import {ARTIFACT_CATEGORY_BY_KIND} from '../shared/artifacts.ts'
-import {isSafeSegment} from './identifiers.ts'
+import {isSafeSegment} from '../util/identifiers.ts'
+
+// ---实用常量---
 
 export const LEARNING_DIR = '.dsh/learning'
-export const LEARNING_ARTIFACT_PATH = `${LEARNING_DIR}/artifacts/<lessons|reviews|quizzes>/<hash>/index.html`
+export const LEARNING_ARTIFACT_PATH_PATTERN = `${LEARNING_DIR}/artifacts/<lessons|reviews|quizzes>/<hash>/index.html`
+
+// ---文件实用方法---
 
 export function isEnoent(error: unknown): boolean {
     return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
@@ -96,9 +100,13 @@ export async function isLearningWorkspace(cwd: string): Promise<boolean> {
 export class LearningFiles {
     readonly root: string
 
+    // 与实际CWD关联
     constructor(readonly cwd: string) {
         this.root = join(cwd, LEARNING_DIR)
     }
+
+
+    // ---路径拼凑---
 
     get outlinesDir(): string {
         return join(this.root, 'outlines')
@@ -152,6 +160,8 @@ export class LearningFiles {
         return join(this.runDir(kind, hash, runId), 'feedback.json')
     }
 
+    // ---实际方法---
+
     async currentIsLearningWorkspace(): Promise<boolean> {
         return isDirectory(this.root)
     }
@@ -160,6 +170,7 @@ export class LearningFiles {
         await mkdir(this.root, {recursive: true})
     }
 
+    // 未被使用？！
     async confirmLearningWorkspace(): Promise<void> {
         if (!await this.currentIsLearningWorkspace()) throw new Error(`学习工作区目录不存在：${this.root}`)
     }
@@ -167,11 +178,13 @@ export class LearningFiles {
     validateArtifactPath(kind: ArtifactKind, path: string): ArtifactTarget {
         const absolute = resolve(path)
         const category = resolve(this.artifactCategoryDir(kind))
+
         if (absolute === category || !absolute.startsWith(category + sep)) throw new Error(`工件路径必须位于目录下：${category}`)
 
         const rest = absolute.slice(category.length + 1)
         const [hash, ...tail] = rest.split(sep)
         if (hash === undefined || tail.join(sep) !== 'index.html' || !isValidArtifactHash(hash)) throw new Error(`工件路径必须符合格式：<learning>/artifacts/${ARTIFACT_CATEGORY_BY_KIND[kind]}/<hash>/index.html`)
+
         return {kind, hash}
     }
 }

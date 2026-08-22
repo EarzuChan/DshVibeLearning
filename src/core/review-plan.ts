@@ -4,9 +4,9 @@ import {randomUUID} from 'node:crypto'
 import type {Card} from 'ts-fsrs'
 import type {ArtifactHash} from '../shared/artifacts.ts'
 import type {ReviewPlan, ReviewPlanRound, ReviewRating, TemporaryReviewPlanRound, TemporaryReviewPlanRoundManifest} from '../shared/model.ts'
-import {cardFromStored, cardToStored, newCard, nextCard} from './fsrs.ts'
+import {cardFromStored, cardToStored, newCard, nextCard} from '../util/fsrs.ts'
 import {isValidArtifactHash, LearningFiles, listJsonFiles, readJson, removePath, writeJson} from './files.ts'
-import {isSafeSegment} from './identifiers.ts'
+import {isSafeSegment} from '../util/identifiers.ts'
 
 export interface ReviewPlanCreationInput {
     readonly outlineId: string

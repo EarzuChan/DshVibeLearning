@@ -1,7 +1,6 @@
-// FSRS 封装：每课一张卡片，仅由模型明确给出的评级推进，ts-fsrs 负责算法，DVL 负责评级映射与持久化，不存在分数到评级的自动推导
-// THINKING：如果是无什么鸟状态，也建议移动到util/？
+// FSRS 封装：每课一张卡片，仅由模型明确给出的评级推进，ts-fsrs 负责算法，DVL 负责评级映射与持久化
 
-import {createEmptyCard, fsrs, generatorParameters, Rating, State} from 'ts-fsrs'
+import {createEmptyCard, fsrs, generatorParameters, Rating} from 'ts-fsrs'
 import type {Card, Grade} from 'ts-fsrs'
 import type {FsrsCard, ReviewRating} from '../shared/model.ts'
 
@@ -41,24 +40,4 @@ export function gradeFor(rating: ReviewRating): Grade {
 // 按模型明确给出的评级推进卡片并返回包含下次到期时间的新卡片
 export function nextCard(card: Card, rating: ReviewRating, now: number): Card {
     return scheduler.next(card, new Date(now), gradeFor(rating)).card
-}
-
-// 返回供 prompt 与 GUI 使用的卡片状态文本
-export function stateLabel(card: Card): string {
-    switch (card.state) {
-        case State.New:
-            return 'new'
-
-        case State.Learning:
-            return 'learning'
-
-        case State.Review:
-            return 'review'
-
-        case State.Relearning:
-            return 'relearning'
-
-        default:
-            return String(card.state)
-    }
 }

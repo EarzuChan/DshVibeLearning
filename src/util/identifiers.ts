@@ -1,8 +1,6 @@
 import {createHash} from 'node:crypto'
 
-// TODO：应建立统一`util/`包然后移去
-
-// 生成工件目录使用的短**内容**哈希，相同内容始终得到相同 ID
+// 生成工件目录使用的短内容哈希，相同内容始终得到相同 ID
 export function generateContentHash(data: string, length = 16): string {
     return createHash('sha256').update(data).digest('hex').slice(0, length)
 }

@@ -9,12 +9,12 @@ import {SessionId as brandSessionId, type SessionId} from '@deepseek-ai/dsh-sess
 import type {LearningService} from '../core/index.ts'
 import type {DataChange, DataResetSignal} from '../core/data-change-bus.ts'
 import {isLearningWorkspace, isValidArtifactHash, isValidRunId, LEARNING_DIR} from '../core/files.ts'
-import {generateWorkspaceHashIdOf} from '../core/identifiers.ts'
+import {generateWorkspaceHashIdOf} from '../util/identifiers.ts'
 import {findOutlineLesson, outlineArtifactHashes} from '../core/outline.ts'
 import {artifactKindOf} from '../shared/artifacts.ts'
 import type {AbortRunRequest, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, LearningDataDto} from '../shared/api.ts'
+import {CORDIS_EFFECT_BACKEND_ROUTES, DVL_SERVER_ROUTE_PREFIX} from '../shared/constants.ts'
 import type {NoteAccess} from '../shared/model.ts'
-import {LEARNING_ROUTE_PREFIX} from '../shared/routes.ts'
 import {getWorkspaceCwdOrNullByItsHashId, recordWorkspaceHashIdByGeneratingItFromItsCwd} from './workspace-hash-id-related.ts'
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024
@@ -73,12 +73,14 @@ const asString = (value: unknown): string => typeof value === 'string' ? value :
 const asTags = (value: unknown): string[] => Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
 const asAccess = (value: unknown): NoteAccess => value === 'private' || value === 'readable' || value === 'readwrite' ? value : 'readable'
 
-export function installLearningRoutes(ctx: Context): void {
-    const learning: LearningService = ctx.learning
+// 伟大安装点
+export function installLearningRoutes(ctx: Context, learning: LearningService): void {
+    // 这个**的确需要**CWD先有所被记住。但我觉得这是合理的，因为一般用户，在 UI 上也是先看到这个工作区（这就隐含已记住其了），再去想办法用它的端点服务。故目前尚算合理
     const resolveCwd = (workspaceId: string): string | null => getWorkspaceCwdOrNullByItsHashId(ctx, workspaceId)
 
     const deliverIntent = async (cwd: string, requestedSessionId: string, instruction: string): Promise<{mode: 'current-session' | 'new-session'; sessionId: string}> => {
         const current: Agent | undefined = requestedSessionId.length === 0 ? undefined : ctx.agents.get(brandSessionId(requestedSessionId))
+
         if (current !== undefined) {
             if (learning.getCurrentSessionDvlLearningState(current).entered) learning.notify(current, instruction)
             else await learning.enterVibeLearning(current, instruction)
@@ -90,6 +92,7 @@ export function installLearningRoutes(ctx: Context): void {
         return {mode: 'new-session', sessionId: String(created.agent.id)}
     }
 
+    // 核心处理。伟大的“无状态随时斥候”
     const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         const url = new URL(req.url ?? '/', 'http://127.0.0.1')
         const path = url.pathname
@@ -262,11 +265,12 @@ export function installLearningRoutes(ctx: Context): void {
         sendText(res, 404, '未找到')
     }
 
-    ctx.effect(() => ctx.webServer.register({kind: 'prefix', path: LEARNING_ROUTE_PREFIX, handler: (req, res) => {
+    // 总入口点和兜底
+    ctx.effect(() => ctx.webServer.register({kind: 'prefix', path: DVL_SERVER_ROUTE_PREFIX, handler: (req, res) => {
         void handle(req, res).catch((error: unknown) => {
             ctx.logger.warn(`学习路由处理失败：${error instanceof Error ? error.message : String(error)}`)
             if (!res.headersSent) sendJson(res, 500, {error: error instanceof Error ? error.message : String(error)})
             else res.destroy()
         })
-    }}), 'dvl: /learning routes')
+    }}), CORDIS_EFFECT_BACKEND_ROUTES)
 }

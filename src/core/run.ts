@@ -69,6 +69,7 @@ export class RunStore {
         }
     }
 
+    // CHECK：竟无人用这个？？
     async peek(artifact: ArtifactRef, key: RunReuseKey): Promise<RunRef | null> {
         const current = this.keyedRuns.get(reuseKey(artifact, key))
         return current !== undefined && await this.exists(current) ? current : null
@@ -83,18 +84,24 @@ export class RunStore {
 
     async finish(ref: RunRef, outcome: RunOutcome): Promise<{outcome: RunOutcome; alreadyFinished: boolean}> {
         if (!await this.exists(ref)) throw new Error(`Run 不存在：${ref.runId}`)
+
         const wrote = await writeJsonOnce(this.files(ref.cwd).outcomeFile(ref.kind, ref.hash, ref.runId), outcome)
+
         const durable = wrote ? outcome : await this.outcome(ref)
         if (durable === null) throw new Error(`Run ${ref.runId} 的终局写入失败`)
+
         if (wrote) this.publish(ref, durable)
+
         return {outcome: durable, alreadyFinished: !wrote}
     }
 
     async saveFeedback(ref: RunRef, payload: unknown): Promise<FeedbackEnvelope> {
         const outcome = await this.outcome(ref)
         if (outcome?.state !== 'completed') throw new Error(`Run ${ref.runId} 尚未完成，不能保存批改`)
+
         const feedback: FeedbackEnvelope = {payload}
         await writeJson(this.files(ref.cwd).feedbackFile(ref.kind, ref.hash, ref.runId), feedback)
+
         return feedback
     }
 

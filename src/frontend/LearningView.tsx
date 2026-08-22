@@ -79,8 +79,8 @@ function ArtifactBlock({artifact, category, face, deletable = false}: {artifact:
                             <span className={css.outlineMeta}>{new Date(run.modifiedAt).toLocaleString()}</span>
                             {run.hasFeedback && <span className={css.metaBadge}>{t('artifact.run.feedback')}</span>}
                             {run.inBandSessionId !== undefined && <span className={css.metaBadge}>In-band · {run.inBandSessionId.slice(0, 8)}</span>}
-                            {run.state === 'active' && <Button size="sm" variant="outline" onClick={() => api.openRun(category, artifact.hash, run.runId)}>继续</Button>}
-                            {run.state === 'active' && run.inBandSessionId === undefined && !hasInband && <Button size="sm" variant="primary" onClick={() => onInband(category, artifact.hash, run.runId)}>交给会话</Button>}
+                            {run.state === 'active' && <Button size="sm" variant="outline" onClick={() => api.openRun(category, artifact.hash, run.runId)}>继续作答（在新标签页打开）</Button>}
+                            {run.state === 'active' && run.inBandSessionId === undefined && !hasInband && <Button size="sm" variant="primary" onClick={() => onInband(category, artifact.hash, run.runId)}>交给会话来继续</Button>}
                             {run.state === 'active' && <Button size="sm" variant="ghost" onClick={() => void api.abortRun(category, artifact.hash, run.runId)}>放弃</Button>}
                         </li>
                     ))}
@@ -197,6 +197,8 @@ export function LearningView(props: LearningViewProps) {
 
     const confirmInband = async (targetSessionId: string): Promise<void> => {
         if (inbandTarget === null) return
+
+        // FIXME：新开会话不能保证新开，有BUG！
         try {
             if (inbandTarget.kind === 'artifact') await api.inbandPresentExisting(inbandTarget.category, inbandTarget.hash, targetSessionId, inbandTarget.runId)
             else await api.startDueReview(inbandTarget.planId, targetSessionId)

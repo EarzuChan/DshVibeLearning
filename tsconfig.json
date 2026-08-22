@@ -14,6 +14,7 @@
   "include": [
     "src/index.ts",
     "src/shared",
+    "src/util",
     "src/core",
     "src/tool",
     "src/command",

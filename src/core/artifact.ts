@@ -5,6 +5,7 @@ import type {ArtifactHash, ArtifactKind} from '../shared/artifacts.ts'
 import type {ArtifactSummary} from '../shared/model.ts'
 import {isEnoent, isValidArtifactHash, LearningFiles, listDirectories, removePath} from './files.ts'
 
+// 解析HTML来提取名字（笑）
 function titleOf(html: string, hash: string): string {
     const match = /<title[^>]*>([\s\S]*?)<\/title>/iu.exec(html)
     return match?.[1]?.replace(/\s+/gu, ' ').trim() || hash
