@@ -1,11 +1,11 @@
-// 氛围学习会话事件的唯一事件入口：事件构造与追加只允许发生在本文件，外部不得直接触碰官方 feedback/record 载荷
+// 氛围学习会话事件的唯一事件入口：事件构造与追加只允许发生在本文件，其他地方不直接触碰事件相关
 
 import type {Session, SessionEvent} from '@deepseek-ai/dsh-session'
 
-// 借用官方'feedback/record'事件来当我们的事件载体
+// 借用官方'feedback/record'事件来当我们的真事件“外壳”。为什么要这样？因为目前自定义事件会被，即使是`0.1.1-rc.2`，在重开会话时“吃拿卡要”（会话被判有误，拒绝进一步加载）
 declare module '@deepseek-ai/dsh-session/types' {
     interface SessionEventMap {
-        'feedback/record': { text: string }
+        'feedback/record': { text: string } // text的内容，是届时我们真正的“事件”
     }
 }
 

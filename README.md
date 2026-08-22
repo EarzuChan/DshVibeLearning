@@ -6,17 +6,12 @@
 
 ## 使用
 
-单次实例体验：
 ```sh
-dsh --profile web --patch /pathToYour/DshVibeLearning/cordis.patch.yml --port 3090 # 在 3090 上运行本实例，不干扰可能的3080默认实例
+dsh plugin --profile web add /pathToYour/DshVibeLearning # 添加本插件到你的配置项
+dsh web # 持久生效，直接使用
 ```
 
-持久安装使用：
-```sh
-dsh plugin --profile web add dsh-vibe-learning # 安装到 web 这个配置
-dsh web # 默认实例持久生效
-```
-# 最高指示：以下文档未修订，未必对，可以不看
+# 以下文档未完全修订，未必对，可以不看
 
 ## 项目架构、关键流程、关键概念与模型的解析
 
