@@ -99,12 +99,15 @@ export class LearningService extends Service {
 
         ctx.inject(['sessionProjections'], (scope: Context) => { scope.sessionProjections.register(dvlLearningProjection) })
 
+        // 唔应该用 pre-step 个生命周期，应该用 waterfall/assemble 嗰个嘢。同 system prompt 更加有关系，而且都有缓存，就唔使疯狂追加咁样疯狂叠上下文
         ctx.on('agent/pre-step', async (payload, next): Promise<PreStepDecision> => {
-            const state = await this.prepareAgent(payload.agent, payload.turn, payload.signal)
+            const state = await this.prepareAgent(payload.agent, payload.turn, payload.signal) // 以及里头干PreTurn
+
+            // 拒绝/未进入，则不早返，不操刀
             const decision = await next()
             if (decision.kind === 'reject' || payload.signal.aborted || !state.entered) return decision
 
-            // 下为PreStep的注入
+            // 下为正式搞弄PreStep的注入（不计算，只提取，计算在PreTurn）
 
             const snapshot = this.preparations.get(payload.agent)?.snapshot
             if (snapshot === undefined) return decision
@@ -509,11 +512,12 @@ export class LearningService extends Service {
 
     // ---剩余金典会话内容---
 
-    // 拍摄快照，用于Step钩子注入最新
+    // 拍摄快照，用于Turn钩子注入最新
     async snapshotLearningWorkspaceState(cwd: string, activeOutlineId: string | null): Promise<LearningSnapshot> {
         recordWorkspaceHashIdByGeneratingItFromItsCwd(cwd)
+
         const exists = await this.filesFor(cwd).currentIsLearningWorkspace()
-        if (!exists) return {workspaceId: generateWorkspaceHashIdOf(cwd), learningDirExists: false, activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: '学习工作区目录不存在'}
+        if (!exists) return {workspaceId: generateWorkspaceHashIdOf(cwd), learningDirExists: false, activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: '学习工作区目录不存在'} // 两回啊两回门禁
 
         try {
             const outlines = await this.listOutlines(cwd)
@@ -547,22 +551,23 @@ export class LearningService extends Service {
         }
     }
 
-    // 一般来说PreTurn
+    // 内含PreTurn（更新snapshot）！！！本方法被PreStep调用！！！
     private async prepareAgent(agent: Agent, turn: number, signal: AbortSignal): Promise<SessionDvlLearningState> {
-        // 检查
-
         const state = this.getCurrentSessionDvlLearningState(agent)
 
         const existing = this.preparations.get(agent)
-        if (existing?.confirmedTurn === turn && existing.snapshot.activeOutlineId === state.activeOutlineId) return state
-        if (!state.entered || signal.aborted) return state
+        if (existing?.confirmedTurn === turn && existing.snapshot.activeOutlineId === state.activeOutlineId) return state // 本轮已PreTurn过则ret
+        if (!state.entered || signal.aborted) return state // 未进入or放弃则ret
 
         // 下为每Turn一次
 
+        // 如已进入学习模式但还没挂载工具，则挂载
         if (!this.learningToolsEnabledAgents.has(agent)) {
             agent.ctx.effect(() => installLearningTools(this.ctx, this, agent), CORDIS_EFFECT_AGENT_TOOLS)
             this.learningToolsEnabledAgents.add(agent)
         }
+
+        // 更新快照
 
         const cwd = this.getCurrentSessionCwd(agent)
         const snapshot = cwd === null ? {workspaceId: '', learningDirExists: false, activeOutlineId: state.activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: '学习会话没有工作区目录'} satisfies LearningSnapshot : await this.snapshotLearningWorkspaceState(cwd, state.activeOutlineId)

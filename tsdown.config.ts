@@ -9,7 +9,7 @@ import type {UserConfig} from 'tsdown'
 const ID = 'dsh-vibe-learning'
 
 // Web Shell 冻结模块表提供的平台模块
-const PLATFORM_MODULES = ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/dsh-client-web-react', '@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-client-ui-attachment', '@deepseek-ai/dsh-client-schema-form'] as const
+const PLATFORM_MODULES = ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/dsh-client-ui-primitives'] as const
 
 // Snapshot Store 引擎例外项，由 Shell 的立即层运行时提供
 const RUNTIME_STORE_EXEMPTION = '@deepseek-ai/dsh-client-runtime/client'
@@ -35,8 +35,10 @@ const config: UserConfig = {
     tsconfig: 'src/frontend/tsconfig.json',
     sourcemap: true,
     clean: false,
-    external: [...CLIENT_EXTERNALS],
-    noExternal: (spec: string) => CLIENT_EXTERNALS.includes(spec) ? undefined : true, // 模块表之外的依赖全部内联，否则运行时 require 会找不到
+    deps: {
+        neverBundle: [...CLIENT_EXTERNALS], onlyBundle: ['clsx'],
+        alwaysBundle: (spec: string) => CLIENT_EXTERNALS.includes(spec) ? undefined : true // 模块表之外的依赖全部内联，否则运行时 require 会找不到
+    },
     plugins: [{
         name: 'dsh-css-modules-inline',
 

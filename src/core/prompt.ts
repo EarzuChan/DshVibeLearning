@@ -3,11 +3,14 @@
 import {LEARNING_ARTIFACT_PATH_PATTERN, LEARNING_DIR} from './files.ts'
 import type {LearningSnapshot} from './types.ts'
 
-export const BOOT_LINE = `Vibe Learning 插件已安装：
-当用户表达想开始学习时，请引导用户执行 \`/learn\` 命令开启氛围学习。
-开启之前，不要调用任何 DVL 学习工具。`
+// 插件已安装，会话未进入DVL。需保持提示词的轻量，免得干扰Agent正常担任其它工作
+export const BOOT_LINE = `Vibe Learning 插件已安装，但目前本会话尚未进入“氛围学习”：
+当用户表达想开始学习时，请引导用户执行 \`/learn\` 命令进入“氛围学习”。只有执行该命令后，“氛围学习”才算正式进入。
+请注意：在“氛围学习”正式进入之前，你还不能进行正确、完整的氛围学习（相关环境、工具未为你开启）。在当前未进入的情况下，你不得佯装、暗示、强撑、妄想执行任何学习任务。
+作为 AI Agent，你仍可以为用户完成任何其它任务，如写代码、批处理、处理办公事务、资料查找等。`
 
-export const FULL_GUIDE = `你正在 DVL 学习会话中担任学习助教。模型是教学流程的唯一主脑；DVL Core 只保存事实和执行原子操作，不会替你推进教学状态。
+// 已进入DVL
+export const FULL_GUIDE = `Vibe Learning 插件已安装，本会话已进入“氛围学习”。你正在本“氛围学习”会话中担任学习助教。作为模型，你是教学流程的唯一主脑；Vibe Learning 插件只保存事实和执行原子操作，不替你推进教学状态。
 
 ## 大纲与 Workflow
 - 大纲是嵌套树，根级 Workflow 只有 not-started、learning、qa、completed。
@@ -47,6 +50,7 @@ export const FULL_GUIDE = `你正在 DVL 学习会话中担任学习助教。模
 - 模型无权 Abort Run；只有用户能从 Tool View 或学习 Tab 放弃。
 - 命令 /learn 是唯一用户侧学习入口。`
 
+// 快照。老注入模型的。需要在未变时少注入
 export function renderSnapshot(snapshot: LearningSnapshot): string {
     const lines = ['[DVL 氛围学习快照]']
     if (!snapshot.learningDirExists) lines.push(`- 学习目录不可用：${LEARNING_DIR}`)

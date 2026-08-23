@@ -1,5 +1,10 @@
 // In-band Present 的临时占用关系，不保存 ToolCall 或 Run 的持久状态
 
+// Present大思想=（推进状态机、创建并绑定工件+）模型调用present_artifact得到result+模型批改并调用工具保存（+评估是否创建复习+推进状态机+回复学习情况给用户）
+// present_artifact本身（即InBand）=取得Run并占用之->展示并等待Run被Abort/Complete，直到超时->返回情况给模型->解除占用
+// Run生命周期!=present_artifact生命周期；present_artifact设计为=tool_call生命周期
+// Run是跨进程的（其的设立=有该文件夹，其的结束=有该Outcome。无需各种持久化和复杂生命周期管理逻辑），但present_artifact是跨进程后无法恢复的，进程重启后ToolCall被自动补全为失败；由于Run的占用态也丢了而不会自然恢复，故也正好无需清理。这套连招神奇地达到了一个闭环，但得看看细节有没有坑
+
 import type {InBandLease, RunRef} from './types.ts'
 
 function runKey(run: RunRef): string {

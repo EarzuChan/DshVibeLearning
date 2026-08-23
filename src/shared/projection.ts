@@ -7,6 +7,10 @@ export interface SessionDvlLearningState {
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionStateMap {
+    readonly dvlLearning: SessionDvlLearningState
+  }
+
   interface SessionProjectionMap {
     readonly dvlLearning: SessionDvlLearningState
   }
