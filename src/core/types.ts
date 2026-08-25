@@ -39,6 +39,7 @@ export interface SnapshotOutline {
   readonly id: string
   readonly title: string
   readonly phase: OutlinePhase
+  readonly dueReviewCount: number
 }
 
 export interface SnapshotLesson {

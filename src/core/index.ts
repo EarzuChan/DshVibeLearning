@@ -5,7 +5,7 @@ import {join} from 'node:path'
 import {Service, type Context} from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import z from '@deepseek-ai/schemastery'
-import type {Agent, PreStepDecision} from '@deepseek-ai/dsh-agent'
+import type {Agent} from '@deepseek-ai/dsh-agent'
 import {createUserMessage} from '@deepseek-ai/dsh-llm'
 import {installLearnCommand} from '../command/index.ts'
 import type {ArtifactHash, ArtifactKind} from '../shared/artifacts.ts'
@@ -44,11 +44,6 @@ export interface Config {
     readonly presentTimeoutMs?: number
 }
 
-interface AgentPreparation {
-    readonly confirmedTurn: number
-    readonly snapshot: LearningSnapshot
-}
-
 // ---实用小造---
 
 function noticeMessage(text: string) {
@@ -69,7 +64,6 @@ export class LearningService extends Service {
     readonly inBandPresentations = new InBandPresentationRegistry()
 
     private readonly learningToolsEnabledAgents = new WeakSet<Agent>() // 已被安工具的会话
-    private readonly preparations = new WeakMap<Agent, AgentPreparation>() // 准备即为【PreTurn+快照】
 
 
     // 外围能力仍各自实现，LearningService 只统一拥有其安装与卸载生命周期
@@ -99,22 +93,26 @@ export class LearningService extends Service {
 
         ctx.inject(['sessionProjections'], (scope: Context) => { scope.sessionProjections.register(dvlLearningProjection) })
 
-        // 唔应该用 pre-step 个生命周期，应该用 waterfall/assemble 嗰个嘢。同 system prompt 更加有关系，而且都有缓存，就唔使疯狂追加咁样疯狂叠上下文
-        ctx.on('agent/pre-step', async (payload, next): Promise<PreStepDecision> => {
-            const state = await this.prepareAgent(payload.agent, payload.turn, payload.signal) // 以及里头干PreTurn
+        // 这个是确保工具挂载的：以便回放的老对话可用
+        ctx.on('agent/session-start', ({agent}) => {
+            if (this.getCurrentSessionDvlLearningState(agent).entered) this.ensureLearningToolsMounted(agent)
+        })
 
-            // 拒绝/未进入，则不早返，不操刀
-            const decision = await next()
-            if (decision.kind === 'reject' || payload.signal.aborted || !state.entered) return decision
+        // 这个是
+        ctx.on('system-prompt/assemble', async (assembly, context, next) => {
+            const result = await next()
+            const agent = context.agent
 
-            // 下为正式搞弄PreStep的注入（不计算，只提取，计算在PreTurn）
+            // 无agent或者未进入或放弃，则early ret
+            if (agent === undefined || !this.getCurrentSessionDvlLearningState(agent).entered || context.signal?.aborted === true) return result
 
-            const snapshot = this.preparations.get(payload.agent)?.snapshot
-            if (snapshot === undefined) return decision
+            const state = this.getCurrentSessionDvlLearningState(agent)
+            const cwd = this.getCurrentSessionCwd(agent)
 
+            const snapshot = cwd === null ? {workspaceId: '', learningDirExists: false, activeOutlineId: state.activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: '学习会话没有工作区目录'} satisfies LearningSnapshot : await this.snapshotLearningWorkspaceState(cwd, state.activeOutlineId)
             const text = renderSnapshot(snapshot)
 
-            return {kind: 'enter', messages: [...decision.messages, createUserMessage({content: [{type: 'text', text}], source: {kind: 'plugin', plugin: 'learning', form: 'snapshot', sections: [{name: CORDIS_SECTION_SNAPSHOT, text}]}})]}
+            return {...result, contexts: [...result.contexts, {name: CORDIS_SECTION_SNAPSHOT, text}]}
         }, {prepend: true})
     }
 
@@ -162,6 +160,7 @@ export class LearningService extends Service {
         this.publishWorkspace(cwd)
 
         recordLearningEnteredToSession(agent.session)
+        this.ensureLearningToolsMounted(agent)
 
         agent.steer(noticeMessage(bootMsg))
         return true
@@ -538,6 +537,7 @@ export class LearningService extends Service {
                 }
             }
 
+            const planById = new Map(plans.map(plan => [plan.id, plan]))
             const dueReviews = plans.flatMap(plan => {
                 const active = plan.rounds.find(round => round.state === 'active')
                 const dueAt = String(plan.card.due)
@@ -545,35 +545,24 @@ export class LearningService extends Service {
             }).sort((left, right) => left.dueAt.localeCompare(right.dueAt))
 
             const currentLesson = active !== null && lesson?.kind === 'lesson' && (active.workflow.phase === 'learning' || active.workflow.phase === 'qa') ? {id: lesson.id, title: lesson.title, phase: active.workflow.phase} : null
-            return {workspaceId: generateWorkspaceHashIdOf(cwd), learningDirExists: true, activeOutlineId, outlines: outlines.map(outline => ({id: outline.id, title: outline.title, phase: outline.workflow.phase})), currentLesson, dueReviews}
+            const visibleDueReviews = activeOutlineId === null ? dueReviews : dueReviews.filter(review => planById.get(review.planId)?.outlineId === activeOutlineId)
+            const dueReviewCountByOutline = new Map<string, number>()
+            for (const review of dueReviews) {
+                const outlineId = planById.get(review.planId)?.outlineId
+                if (outlineId !== undefined) dueReviewCountByOutline.set(outlineId, (dueReviewCountByOutline.get(outlineId) ?? 0) + 1)
+            }
+            const snapshotOutlines = outlines.map(outline => ({id: outline.id, title: outline.title, phase: outline.workflow.phase, dueReviewCount: dueReviewCountByOutline.get(outline.id) ?? 0}))
+            return {workspaceId: generateWorkspaceHashIdOf(cwd), learningDirExists: true, activeOutlineId, outlines: snapshotOutlines, currentLesson, dueReviews: visibleDueReviews}
         } catch (error: unknown) {
             return {workspaceId: generateWorkspaceHashIdOf(cwd), learningDirExists: true, activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: errorText(error)}
         }
     }
 
-    // 内含PreTurn（更新snapshot）！！！本方法被PreStep调用！！！
-    private async prepareAgent(agent: Agent, turn: number, signal: AbortSignal): Promise<SessionDvlLearningState> {
-        const state = this.getCurrentSessionDvlLearningState(agent)
-
-        const existing = this.preparations.get(agent)
-        if (existing?.confirmedTurn === turn && existing.snapshot.activeOutlineId === state.activeOutlineId) return state // 本轮已PreTurn过则ret
-        if (!state.entered || signal.aborted) return state // 未进入or放弃则ret
-
-        // 下为每Turn一次
-
-        // 如已进入学习模式但还没挂载工具，则挂载
+    private ensureLearningToolsMounted(agent: Agent): void {
         if (!this.learningToolsEnabledAgents.has(agent)) {
             agent.ctx.effect(() => installLearningTools(this.ctx, this, agent), CORDIS_EFFECT_AGENT_TOOLS)
             this.learningToolsEnabledAgents.add(agent)
         }
-
-        // 更新快照
-
-        const cwd = this.getCurrentSessionCwd(agent)
-        const snapshot = cwd === null ? {workspaceId: '', learningDirExists: false, activeOutlineId: state.activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: '学习会话没有工作区目录'} satisfies LearningSnapshot : await this.snapshotLearningWorkspaceState(cwd, state.activeOutlineId)
-        this.preparations.set(agent, {confirmedTurn: turn, snapshot})
-
-        return state
     }
 
     private getOriginBase(): string {

@@ -78,6 +78,7 @@ export function installLearningRoutes(ctx: Context, learning: LearningService): 
     // 这个**的确需要**CWD先有所被记住。但我觉得这是合理的，因为一般用户，在 UI 上也是先看到这个工作区（这就隐含已记住其了），再去想办法用它的端点服务。故目前尚算合理
     const resolveCwd = (workspaceId: string): string | null => getWorkspaceCwdOrNullByItsHashId(ctx, workspaceId)
 
+    // CHECK：这个和Make InBand Present有关系？!
     const deliverIntent = async (cwd: string, requestedSessionId: string, instruction: string): Promise<{mode: 'current-session' | 'new-session'; sessionId: string}> => {
         const current: Agent | undefined = requestedSessionId.length === 0 ? undefined : ctx.agents.get(brandSessionId(requestedSessionId))
 

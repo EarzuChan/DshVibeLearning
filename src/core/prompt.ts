@@ -53,10 +53,20 @@ export const FULL_GUIDE = `Vibe Learning 插件已安装，本会话已进入“
 // 快照。老注入模型的。需要在未变时少注入
 export function renderSnapshot(snapshot: LearningSnapshot): string {
     const lines = ['[DVL 氛围学习快照]']
-    if (!snapshot.learningDirExists) lines.push(`- 学习目录不可用：${LEARNING_DIR}`)
-    if (snapshot.problem !== undefined) lines.push(`- 阻塞事实：${snapshot.problem}。请向用户说明或使用工具修正，不要臆造状态。`)
 
-    if (snapshot.activeOutlineId === null) lines.push('- 当前会话没有激活大纲。')
+    if (!snapshot.learningDirExists) lines.push(`- 学习工作区不存在：${LEARNING_DIR}！`)
+
+    if (snapshot.problem !== undefined) lines.push(`- 阻塞事实：${snapshot.problem}。请向用户说明或使用工具修正，不得臆造状态。`)
+
+    if (snapshot.activeOutlineId === null) {
+        lines.push('- 当前会话没有激活大纲。')
+
+        if (snapshot.outlines.length === 0) lines.push('- 当前工作区还没有设立任何大纲，可以询问用户是否想开始学习、为ta设立第一个大纲。')
+        else {
+            lines.push('- 本工作区的可用大纲及到期复习数量：')
+            for (const outline of snapshot.outlines) lines.push(`  · ${outline.title}（到期复习：${outline.dueReviewCount} 项）`)
+        }
+    }
     else {
         const outline = snapshot.outlines.find(item => item.id === snapshot.activeOutlineId)
         lines.push(`- 激活大纲：${outline?.title ?? snapshot.activeOutlineId}（${outline?.phase ?? '不可读取'}）`)
