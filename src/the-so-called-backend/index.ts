@@ -124,6 +124,35 @@ export function installLearningRoutes(ctx: Context, learning: LearningService): 
             return descriptor === null ? sendJson(res, 404, {error: '该 Tool Call 当前没有 In-band Present'}) : sendJson(res, 200, descriptor)
         }
 
+        // ---这俩私家高级交互弹窗---
+
+        if (req.method === 'GET' && path === '/learning/api/interactions/stream') {
+            const sessionId = url.searchParams.get('sessionId')
+            if (sessionId === null || sessionId.length === 0) return sendJson(res, 400, {error: '必须提供 sessionId'})
+            res.writeHead(200, {'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive'})
+            res.write(': connected\n\n')
+            const send = (event: unknown): void => { res.write(`data: ${JSON.stringify(event)}\n\n`) }
+            const dispose = learning.interactions.subscribe((targetSessionId, event) => { if (targetSessionId === sessionId) send(event) })
+            for (const interaction of learning.interactions.pendingFor(sessionId)) send({type: 'requested', interaction})
+            const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 25_000)
+            heartbeat.unref?.()
+            req.on('close', () => { clearInterval(heartbeat); dispose() })
+            return
+        }
+
+        const interactionResponse = /^\/learning\/api\/interactions\/([^/]+)\/respond$/u.exec(path)
+        if (req.method === 'POST' && interactionResponse !== null) {
+            const interactionId = interactionResponse[1]
+            const body = await readBody(req) as {readonly sessionId?: unknown; readonly optionId?: unknown}
+            if (interactionId === undefined || typeof body.sessionId !== 'string' || typeof body.optionId !== 'string') return sendJson(res, 400, {error: '交互响应无效'})
+            try {
+                learning.interactions.respond(interactionId, body.sessionId, body.optionId)
+                return sendJson(res, 200, {ok: true})
+            } catch (error: unknown) {
+                return sendJson(res, 409, {error: error instanceof Error ? error.message : String(error)})
+            }
+        }
+
         if (req.method === 'POST' && path === '/learning/api/runs') {
             const body = await readBody(req) as Partial<DirectRunRequest>
             const cwd = resolveCwd(asString(body.workspaceId))

@@ -4,17 +4,18 @@ import type {ClientContext, SessionId} from '@deepseek-ai/dsh-client-runtime/cli
 import {createSnapshotStore, type SnapshotStore} from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client' // 仅用于合并 ctx.locale 的 Context 类型
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于合并 conversation.view、header utilities 等 SlotMap 类型
-import {abortRun, artifactUrl, buildNotesActions, createDirectRun, deleteLearningEntity, fetchLearningData, fetchLearningWorkspace, fetchNotes, inbandPresentExisting, openDataChangeStream, resolveDescriptor, runUrl, startDueReview} from './api.ts'
+import {abortRun, artifactUrl, buildNotesActions, createDirectRun, deleteLearningEntity, fetchLearningData, fetchLearningWorkspace, fetchNotes, inbandPresentExisting, openDataChangeStream, openInteractionStream, respondToInteraction, resolveDescriptor, runUrl, startDueReview} from './api.ts'
 import type {LearningApi, LearningViewInject, NotesActions, NotesCardInject, PresentToolViewInject} from './contract.ts'
 import {LearningView} from './LearningView.tsx'
 import {en, NS, zh} from './locales.ts'
 import {NotesCard} from './NotesCard.tsx'
 import {OutlineCard} from './OutlineCard.tsx'
 import {InBandPresentArtifactView} from './InBandPresentArtifactView.tsx'
+import {InteractionDialog} from './InteractionDialog.tsx'
 import {createDvlViewStore, idleLearningDomain, idleNotesDomain, idleWorkspaceDomain} from './stores.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
 import type {DataChangeDto} from '../shared/api.ts'
-import {CORDIS_EFFECT_DATA_CHANGE_SUBSCRIBER, CORDIS_EFFECT_DICTIONARIES, CORDIS_EFFECT_LEARNING_DATA_CONTROLLER, CORDIS_EFFECT_LEARNING_VIEW_TAB, CORDIS_EFFECT_LIFECYCLE_CONTROLLER, CORDIS_SLOT_CONVERSATION_VIEW, CORDIS_SLOT_SESSION_HEADER_UTILITIES, CORDIS_SLOT_TOOL_CALL_TOOLVIEW, LEARNING_NOTES_CARD_ID, LEARNING_OUTLINE_CARD_ID, LEARNING_VIEW_ID} from '../shared/constants.ts'
+import {CORDIS_EFFECT_DATA_CHANGE_SUBSCRIBER, CORDIS_EFFECT_DICTIONARIES, CORDIS_EFFECT_LEARNING_DATA_CONTROLLER, CORDIS_EFFECT_LEARNING_VIEW_TAB, CORDIS_EFFECT_LIFECYCLE_CONTROLLER, CORDIS_SLOT_CONVERSATION_VIEW, CORDIS_SLOT_FOR_MY_EX_PANEL, CORDIS_SLOT_TOOL_CALL_TOOLVIEW, DVL_INTERACTION_DIALOG_ID, LEARNING_NOTES_CARD_ID, LEARNING_OUTLINE_CARD_ID, LEARNING_VIEW_ID} from '../shared/constants.ts'
 import type {LearningSourceState, NotesSourceState, WorkspaceSourceState} from './state.ts'
 
 // 必需服务，目标 slot 由 ui-conversation 声明，因此 apply 会通过 slots.inject 等待它们
@@ -307,15 +308,21 @@ export function apply(ctx: ClientContext): void {
     // TIPS：两张面板【常驻注册】，具体显隐由组件根据 projection 与域状态决定
     // TODO：改到更好的挂载点
 
-    ctx.slots.inject(CORDIS_SLOT_SESSION_HEADER_UTILITIES, () => ctx.slots.register({
-        name: CORDIS_SLOT_SESSION_HEADER_UTILITIES, id: LEARNING_OUTLINE_CARD_ID, order: 30, locale: NS, store,
+    ctx.slots.inject(CORDIS_SLOT_FOR_MY_EX_PANEL, () => ctx.slots.register({
+        name: CORDIS_SLOT_FOR_MY_EX_PANEL, id: LEARNING_OUTLINE_CARD_ID, order: 30, locale: NS, store,
         inject: (): { hooks: { learning: SnapshotStore<LearningSourceState> } } => ({hooks: {learning: learningSource}}),
     }, OutlineCard))
 
-    ctx.slots.inject(CORDIS_SLOT_SESSION_HEADER_UTILITIES, () => ctx.slots.register({
-        name: CORDIS_SLOT_SESSION_HEADER_UTILITIES, id: LEARNING_NOTES_CARD_ID, order: 40, locale: NS, store,
+    ctx.slots.inject(CORDIS_SLOT_FOR_MY_EX_PANEL, () => ctx.slots.register({
+        name: CORDIS_SLOT_FOR_MY_EX_PANEL, id: LEARNING_NOTES_CARD_ID, order: 40, locale: NS, store,
         inject: (): { card: NotesCardInject, hooks: { notes: SnapshotStore<NotesSourceState> } } => ({card: {notes: makeNotes()}, hooks: {notes: notesSource}}),
     }, NotesCard))
+
+    // TIPS：私家高级交互弹窗
+    ctx.slots.inject(CORDIS_SLOT_FOR_MY_EX_PANEL, () => ctx.slots.register({
+        name: CORDIS_SLOT_FOR_MY_EX_PANEL, id: DVL_INTERACTION_DIALOG_ID, order: 1000, locale: NS,
+        inject: (): {connect: (sessionId: SessionId, onEvent: (event: import('../shared/api.ts').InteractionEventDto) => void) => () => void; respond: typeof respondToInteraction} => ({connect: (sessionId, onEvent) => { const source = openInteractionStream(sessionId, onEvent); return () => source.close() }, respond: respondToInteraction}),
+    }, InteractionDialog))
 
     // TIPS：挂载 IN-BAND工件展现 视图
     ctx.slots.inject(CORDIS_SLOT_TOOL_CALL_TOOLVIEW, () => ctx.slots.register({

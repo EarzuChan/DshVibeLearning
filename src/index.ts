@@ -6,7 +6,7 @@ import type {Config as LearningConfig} from './core/index.ts'
 export const name = 'dsh-vibe-learning'
 
 // 插件依赖的外部服务，**不包含由插件自身挂载的 learning**
-export const inject = ['commands', 'skills', 'tools', 'userQuestions', 'agents', 'webServer']
+export const inject = ['commands', 'skills', 'tools', 'agents', 'webServer']
 
 // 由加载器校验并补默认值的插件配置。zod
 export const Config = LearningService.Config

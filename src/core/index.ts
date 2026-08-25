@@ -25,6 +25,7 @@ import {recordLearningEnteredToSession, recordLearningOutlineChangeToSession} fr
 import {NotesStore} from './notes.ts'
 import {findOutlineLesson, outlineArtifactHashes, OutlineStore, type OutlineInput} from './outline.ts'
 import {InBandPresentationRegistry} from './presentation.ts'
+import {InteractionService} from './interaction.ts'
 import {dvlLearningProjection} from './projection.ts'
 import {BOOT_LINE, FULL_GUIDE, renderSnapshot} from './prompt.ts'
 import {ReviewPlanStore, type PreparedReviewPlan, type ReviewPlanCreationInput} from './review-plan.ts'
@@ -62,6 +63,7 @@ export class LearningService extends Service {
     readonly dataChanges = new DataChangeBus()
     readonly runs = new RunStore()
     readonly inBandPresentations = new InBandPresentationRegistry()
+    readonly interactions = new InteractionService()
 
     private readonly learningToolsEnabledAgents = new WeakSet<Agent>() // 已被安工具的会话
 
@@ -538,6 +540,7 @@ export class LearningService extends Service {
             }
 
             const planById = new Map(plans.map(plan => [plan.id, plan]))
+
             const dueReviews = plans.flatMap(plan => {
                 const active = plan.rounds.find(round => round.state === 'active')
                 const dueAt = String(plan.card.due)
@@ -545,13 +548,17 @@ export class LearningService extends Service {
             }).sort((left, right) => left.dueAt.localeCompare(right.dueAt))
 
             const currentLesson = active !== null && lesson?.kind === 'lesson' && (active.workflow.phase === 'learning' || active.workflow.phase === 'qa') ? {id: lesson.id, title: lesson.title, phase: active.workflow.phase} : null
+
             const visibleDueReviews = activeOutlineId === null ? dueReviews : dueReviews.filter(review => planById.get(review.planId)?.outlineId === activeOutlineId)
+
             const dueReviewCountByOutline = new Map<string, number>()
             for (const review of dueReviews) {
                 const outlineId = planById.get(review.planId)?.outlineId
                 if (outlineId !== undefined) dueReviewCountByOutline.set(outlineId, (dueReviewCountByOutline.get(outlineId) ?? 0) + 1)
             }
+
             const snapshotOutlines = outlines.map(outline => ({id: outline.id, title: outline.title, phase: outline.workflow.phase, dueReviewCount: dueReviewCountByOutline.get(outline.id) ?? 0}))
+
             return {workspaceId: generateWorkspaceHashIdOf(cwd), learningDirExists: true, activeOutlineId, outlines: snapshotOutlines, currentLesson, dueReviews: visibleDueReviews}
         } catch (error: unknown) {
             return {workspaceId: generateWorkspaceHashIdOf(cwd), learningDirExists: true, activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: errorText(error)}

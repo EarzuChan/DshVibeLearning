@@ -3,7 +3,6 @@ import type {Agent} from '@deepseek-ai/dsh-agent'
 import type {ContentBlock} from '@deepseek-ai/dsh-llm'
 import type {JsonValue} from '@deepseek-ai/dsh-session'
 import {defineTool, type GenericCallView} from '@deepseek-ai/dsh-tools'
-import type {} from '@deepseek-ai/dsh-user-questions'
 import type {LearningService} from '../core/index.ts'
 import {LEARNING_ARTIFACT_PATH_PATTERN} from '../core/files.ts'
 import type {ArtifactKind} from '../shared/artifacts.ts'
@@ -11,13 +10,15 @@ import type {OutlineNode, OutlinePhase, ReviewRating} from '../shared/model.ts'
 
 interface ConfirmAnswer { readonly confirmed: boolean; readonly custom?: string }
 
-async function confirmWrite(ctx: Context, agent: Agent, title: string, detail: string, signal?: AbortSignal): Promise<ConfirmAnswer> {
+async function confirmWrite(learning: LearningService, agent: Agent, title: string, detail: unknown, signal?: AbortSignal): Promise<ConfirmAnswer> {
     try {
-        const answer = await ctx.userQuestions.ask({questions: [{id: 'confirm', header: '确认写入', question: title, detail, options: [{label: '确认', description: '允许本次写入'}, {label: '取消', description: '放弃本次写入'}]}], agent, ...(signal === undefined ? {} : {signal})})
-        const chosen = answer.answers[0]
-        return {confirmed: chosen?.selected.includes('确认') ?? false, ...(chosen?.custom === undefined ? {} : {custom: chosen.custom})}
+        const content = typeof detail === 'string' ? {kind: 'markdown' as const, text: detail} : {kind: 'json' as const, value: detail as JsonValue}
+
+        const optionId = await learning.interactions.ask({agent, title, content, options: [{id: 'confirm', label: '确认', description: '允许本次写入'}, {id: 'cancel', label: '取消', description: '放弃本次写入'}], signal})
+
+        return {confirmed: optionId === 'confirm'}
     } catch {
-        return {confirmed: false, custom: '确认交互不可用'}
+        return {confirmed: false, custom: `系统提问用户 ${title} 时出错`}
     }
 }
 
@@ -152,7 +153,7 @@ export function installLearningTools(ctx: Context, learning: LearningService, ag
 
                 const outline = await learning.normalizeOutline(cwd, {title: args.title, tree: args.tree as unknown as OutlineNode[]}, args.outline_id)
 
-                const answer = await confirmWrite(ctx, agent, args.outline_id === null ? `新建大纲「${args.title}」？` : `更新大纲「${args.title}」？`, JSON.stringify(outline.tree, null, 2), exec.signal)
+                const answer = await confirmWrite(learning, agent, args.outline_id === null ? `新建大纲「${args.title}」？` : `更新大纲「${args.title}」？`, outline.tree, exec.signal)
                 if (!answer.confirmed) return {outcome: 'cancelled' as const, ...(answer.custom === undefined ? {} : {detail: answer.custom})}
 
                 await learning.saveOutline(cwd, outline)
@@ -176,7 +177,7 @@ export function installLearningTools(ctx: Context, learning: LearningService, ag
             try {
                 const outline = await learning.readOutline(cwd, args.outline_id)
                 if (outline === null) return {outcome: 'error' as const, detail: `大纲不存在：${args.outline_id}`}
-                const answer = await confirmWrite(ctx, agent, args.artifact_hash === null ? `解除课程「${args.lesson_id}」的工件绑定？` : `为课程「${args.lesson_id}」绑定工件？`, JSON.stringify({outlineId: args.outline_id, lessonId: args.lesson_id, artifactHash: args.artifact_hash}, null, 2), exec.signal)
+                const answer = await confirmWrite(learning, agent, args.artifact_hash === null ? `解除课程「${args.lesson_id}」的工件绑定？` : `为课程「${args.lesson_id}」绑定工件？`, {outlineId: args.outline_id, lessonId: args.lesson_id, artifactHash: args.artifact_hash}, exec.signal)
                 if (!answer.confirmed) return {outcome: 'cancelled' as const, ...(answer.custom === undefined ? {} : {detail: answer.custom})}
                 const updated = await learning.updateOutlineArtifactBinding(cwd, args.outline_id, args.lesson_id, args.artifact_hash)
                 return {outcome: 'confirmed' as const, outline: updated as unknown as Record<string, JsonValue>}
@@ -201,7 +202,7 @@ export function installLearningTools(ctx: Context, learning: LearningService, ag
                 if (before === null) return {outcome: 'error' as const, detail: `大纲不存在：${args.outline_id}`}
                 const requiresConfirmation = before.workflow.phase === 'qa' && (args.phase === 'learning' || args.phase === 'completed')
                 if (requiresConfirmation) {
-                    const answer = await confirmWrite(ctx, agent, args.phase === 'completed' ? `结束「${before.title}」？` : `结束本课并进入下一课「${args.current_lesson_id ?? ''}」？`, JSON.stringify({from: before.workflow, to: {phase: args.phase, currentLessonId: args.current_lesson_id ?? null}}, null, 2), exec.signal)
+                    const answer = await confirmWrite(learning, agent, args.phase === 'completed' ? `结束「${before.title}」？` : `结束本课并进入下一课「${args.current_lesson_id ?? ''}」？`, {from: before.workflow, to: {phase: args.phase, currentLessonId: args.current_lesson_id ?? null}}, exec.signal)
                     if (!answer.confirmed) return {outcome: 'cancelled' as const, ...(answer.custom === undefined ? {} : {detail: answer.custom})}
                 }
                 const outline = await learning.updateOutlineWorkflow(cwd, args.outline_id, args.phase, args.current_lesson_id ?? null)
@@ -258,7 +259,7 @@ export function installLearningTools(ctx: Context, learning: LearningService, ag
             try {
                 const creating = args.plan_id === null
                 if (creating && (args.outline_id === undefined || args.lesson_id === undefined)) return {outcome: 'error' as const, detail: '创建复习计划必须提供 outline_id 和 lesson_id'}
-                const answer = await confirmWrite(ctx, agent, creating ? `为课程「${args.lesson_id ?? ''}」创建复习计划？` : `结算复习计划「${args.plan_id}」的当前期次？`, JSON.stringify({rating: args.rating}, null, 2), exec.signal)
+                const answer = await confirmWrite(learning, agent, creating ? `为课程「${args.lesson_id ?? ''}」创建复习计划？` : `结算复习计划「${args.plan_id}」的当前期次？`, {rating: args.rating}, exec.signal)
                 if (!answer.confirmed) return {outcome: 'cancelled' as const, ...(answer.custom === undefined ? {} : {detail: answer.custom})}
                 if (creating) {
                     const prepared = await learning.createReviewPlan(cwd, {outlineId: args.outline_id as string, lessonId: args.lesson_id as string, rating: args.rating})
@@ -397,7 +398,7 @@ export function installLearningTools(ctx: Context, learning: LearningService, ag
             const note = learning.notes.modelReadable(args.note_id)
             if (note === undefined) return {outcome: 'error' as const, detail: '笔记不存在或模型不可读'}
             if (note.access !== 'readwrite') return {outcome: 'error' as const, detail: '该笔记不允许模型写入'}
-            const answer = await confirmWrite(ctx, agent, `更新笔记「${note.title}」？`, args.markdown.slice(0, 500), exec.signal)
+            const answer = await confirmWrite(learning, agent, `更新笔记「${note.title}」？`, args.markdown.slice(0, 500), exec.signal)
             if (!answer.confirmed) return {outcome: 'cancelled' as const, ...(answer.custom === undefined ? {} : {detail: answer.custom})}
             try {
                 await learning.notes.updateNote(args.note_id, {markdown: args.markdown})

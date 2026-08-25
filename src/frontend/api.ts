@@ -2,7 +2,7 @@
 
 import type {NotesActions} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {AbortRunRequest, ArtifactRunDescriptor, DataChangeDto, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, InbandPresentResult, LearningDataDto, LearningWorkspaceDto, NotesDto} from '../shared/api.ts'
+import type {AbortRunRequest, ArtifactRunDescriptor, DataChangeDto, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, InbandPresentResult, InteractionEventDto, LearningDataDto, LearningWorkspaceDto, NotesDto} from '../shared/api.ts'
 import {DVL_SERVER_ROUTE_PREFIX} from '../shared/constants.ts'
 
 // 执行 JSON GET/POST 请求，非 2xx 时抛出错误
@@ -28,6 +28,16 @@ export function openDataChangeStream(onChange: (change: DataChangeDto) => void):
   const source = new EventSource(`${DVL_SERVER_ROUTE_PREFIX}/api/changes`)
   source.onmessage = event => onChange(JSON.parse(event.data) as DataChangeDto)
   return source
+}
+
+export function openInteractionStream(sessionId: string, onEvent: (event: InteractionEventDto) => void): EventSource {
+  const source = new EventSource(`${DVL_SERVER_ROUTE_PREFIX}/api/interactions/stream?sessionId=${encodeURIComponent(sessionId)}`)
+  source.onmessage = event => onEvent(JSON.parse(event.data) as InteractionEventDto)
+  return source
+}
+
+export function respondToInteraction(interactionId: string, sessionId: string, optionId: string): Promise<void> {
+  return requestJson<unknown>(`${DVL_SERVER_ROUTE_PREFIX}/api/interactions/${encodeURIComponent(interactionId)}/respond`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({sessionId, optionId})}).then(() => undefined)
 }
 
 // 发起带内展示请求并返回服务端结束结果

@@ -1,5 +1,24 @@
 import type {ArtifactCategory, ArtifactTarget} from './artifacts.ts'
 import type {ArtifactSummary, Note, NoteFolder, Outline, ReviewPlan, TemporaryReviewPlanRoundManifest} from './model.ts'
+import type {JsonValue} from '@deepseek-ai/dsh-session'
+
+export type InteractionContent = {readonly kind: 'markdown'; readonly text: string} | {readonly kind: 'json'; readonly value: JsonValue}
+
+export interface InteractionOption {
+  readonly id: string
+  readonly label: string
+  readonly description?: string
+}
+
+export interface PendingInteractionDto {
+  readonly id: string
+  readonly sessionId: string
+  readonly title: string
+  readonly content: InteractionContent
+  readonly options: readonly InteractionOption[]
+}
+
+export type InteractionEventDto = {readonly type: 'requested'; readonly interaction: PendingInteractionDto} | {readonly type: 'resolved'; readonly interactionId: string} | {readonly type: 'cleared'; readonly interactionId: string}
 
 export interface ArtifactRunDescriptor extends ArtifactTarget {
   readonly version: 2

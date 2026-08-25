@@ -7,8 +7,9 @@ import { runInNewContext } from 'node:vm'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import LearningService from '../lib/core/index.js'
-import { installLearningRoutes } from '../lib/artifact-host/index.js'
-import { workspaceIdOf, contentHash } from '../lib/core/identifiers.js'
+import { renderSnapshot } from '../lib/core/prompt.js'
+import { installLearningRoutes } from '../lib/the-so-called-backend/index.js'
+import { generateWorkspaceHashIdOf, generateContentHash } from '../lib/util/identifiers.js'
 
 const ws = await mkdtemp(join(tmpdir(), 'dvl-ws-'))
 const ctx = new Context()
@@ -16,6 +17,20 @@ ctx.provide('logger', { info: () => {}, warn: console.warn, error: console.error
 const config = { dataDir: await mkdtemp(join(tmpdir(), 'dvl-data-')) }
 await ctx.plugin(LearningService, config)
 const service = ctx.learning
+
+const activeSnapshot = renderSnapshot({
+  workspaceId: 'smoke', learningDirExists: true, activeOutlineId: 'math',
+  outlines: [{ id: 'math', title: '数学', phase: 'learning', dueReviewCount: 1 }, { id: 'english', title: '英语', phase: 'not-started', dueReviewCount: 1 }],
+  currentLesson: null, dueReviews: [{ planId: 'math-plan', lessonId: 'math-lesson', lessonTitle: '数学第一课', dueAt: '2026-01-01T00:00:00.000Z' }],
+})
+console.log('SNAPSHOT_ACTIVE_OUTLINE:', activeSnapshot.includes('数学第一课'), !activeSnapshot.includes('英语'))
+
+const inactiveSnapshot = renderSnapshot({
+  workspaceId: 'smoke', learningDirExists: true, activeOutlineId: null,
+  outlines: [{ id: 'math', title: '数学', phase: 'learning', dueReviewCount: 2 }, { id: 'english', title: '英语', phase: 'not-started', dueReviewCount: 1 }],
+  currentLesson: null, dueReviews: [],
+})
+console.log('SNAPSHOT_OUTLINE_COUNTS:', inactiveSnapshot.includes('数学（到期复习：2 项）'), inactiveSnapshot.includes('英语（到期复习：1 项）'))
 // 真 WebServer：port 0 让 OS 分配，验证 DVL 路由与 URL 构造对任意端口的适应性
 await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
 ctx.inject(['webServer', 'learning'], scope => installLearningRoutes(scope))
@@ -23,14 +38,14 @@ await new Promise(r => setTimeout(r, 300))
 const PORT = ctx.webServer.port
 
 const files = service.filesFor(ws)
-await files.ensureRoot()
+await files.createLearningWorkspace()
 const html = '<html><head></head><body><h1>lesson</h1><button onclick="window.DVL.submit({q:[1,null,\"x\"]})">submit</button></body></html>'
-const hash = contentHash(html)
+const hash = generateContentHash(html)
 const artifactPath = join(ws, '.dsh/learning/lessons', hash, 'index.html')
 await mkdir(join(ws, '.dsh/learning/lessons', hash), { recursive: true })
 await writeFile(artifactPath, html)
 service.registerWorkspace(ws)
-const wsId = workspaceIdOf(ws)
+const wsId = generateWorkspaceHashIdOf(ws)
 const base = `http://127.0.0.1:${PORT}/learning/${wsId}/lessons/${hash}`
 
 async function expectThrow(label, fn, re) {

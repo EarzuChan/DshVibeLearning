@@ -1,11 +1,12 @@
 // DVL 浏览器端 slot 契约：定义学习入口与两张浮动卡片注入的业务接口，组件只通过 store 与回调访问业务数据
 
 import type {PropsRuntime, PropsStore, InjectFace, PropsLocale, HostObservable} from '@deepseek-ai/dsh-client-ui-slots'
+import type {SessionId} from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于引入 ui-conversation 的 SlotMap 类型合并
 import type {ToolCallViewProps} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {ArtifactRunDescriptor, InbandPresentResult} from '../shared/api.ts'
-import {CORDIS_SLOT_CONVERSATION_VIEW, CORDIS_SLOT_SESSION_HEADER_UTILITIES} from '../shared/constants.ts'
+import type {ArtifactRunDescriptor, InbandPresentResult, PendingInteractionDto} from '../shared/api.ts'
+import {CORDIS_SLOT_CONVERSATION_VIEW, CORDIS_SLOT_FOR_MY_EX_PANEL} from '../shared/constants.ts'
 import type {NoteAccess} from '../shared/model.ts'
 import type {createDvlViewStore} from './stores.ts'
 import type {LearningDomain, NotesDomain} from './state.ts'
@@ -64,7 +65,7 @@ export type LearningViewProps = PropsRuntime<typeof CORDIS_SLOT_CONVERSATION_VIE
 export interface OutlineCardInject {}
 
 // 纲目浮动卡片完整 props
-export type OutlineCardProps = PropsRuntime<typeof CORDIS_SLOT_SESSION_HEADER_UTILITIES> & PropsStore<DvlViewStore> & InjectFace<{readonly hooks: {readonly learning: HostObservable<LearningSourceSnapshot>}}> & PropsLocale<NS>
+export type OutlineCardProps = PropsRuntime<typeof CORDIS_SLOT_FOR_MY_EX_PANEL> & PropsStore<DvlViewStore> & InjectFace<{readonly hooks: {readonly learning: HostObservable<LearningSourceSnapshot>}}> & PropsLocale<NS>
 
 // 笔记浮动卡片注入接口
 export interface NotesCardInject {
@@ -72,7 +73,9 @@ export interface NotesCardInject {
 }
 
 // 笔记浮动卡片完整 props
-export type NotesCardProps = PropsRuntime<typeof CORDIS_SLOT_SESSION_HEADER_UTILITIES> & PropsStore<DvlViewStore> & InjectFace<{readonly card: NotesCardInject, readonly hooks: {readonly notes: HostObservable<NotesSourceSnapshot>}}> & PropsLocale<NS>
+export type NotesCardProps = PropsRuntime<typeof CORDIS_SLOT_FOR_MY_EX_PANEL> & PropsStore<DvlViewStore> & InjectFace<{readonly card: NotesCardInject, readonly hooks: {readonly notes: HostObservable<NotesSourceSnapshot>}}> & PropsLocale<NS>
+
+export type InteractionDialogProps = PropsRuntime<typeof CORDIS_SLOT_FOR_MY_EX_PANEL> & InjectFace<{readonly connect: (sessionId: SessionId, onEvent: (event: import('../shared/api.ts').InteractionEventDto) => void) => () => void; readonly respond: (interactionId: string, sessionId: SessionId, optionId: string) => Promise<void>}> & PropsLocale<NS>
 
 // keyed present_artifact 工具视图注入接口
 export interface PresentToolViewInject {

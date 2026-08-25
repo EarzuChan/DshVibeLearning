@@ -11,8 +11,11 @@ export const CORDIS_EFFECT_LEARNING_DATA_CONTROLLER = 'dvl: learning data contro
 export const CORDIS_EFFECT_LEARNING_VIEW_TAB = 'dvl: learning view tab'
 export const CORDIS_EFFECT_BACKEND_ROUTES = 'dvl: /learning routes'
 export const CORDIS_EFFECT_AGENT_TOOLS = 'dvl: agent tools'
+
+// UI 挂载点
+
 export const CORDIS_SLOT_CONVERSATION_VIEW = 'conversation.view'
-export const CORDIS_SLOT_SESSION_HEADER_UTILITIES = 'conversation.session.header.utilities'
+export const CORDIS_SLOT_FOR_MY_EX_PANEL = 'conversation.session.header.utilities'
 export const CORDIS_SLOT_TOOL_CALL_TOOLVIEW = 'tool.call.toolview'
 
 // --- 前端“贡献点” ---
@@ -20,6 +23,7 @@ export const CORDIS_SLOT_TOOL_CALL_TOOLVIEW = 'tool.call.toolview'
 export const LEARNING_VIEW_ID = 'vibe-learning'
 export const LEARNING_OUTLINE_CARD_ID = 'vibe-learning-outline-card'
 export const LEARNING_NOTES_CARD_ID = 'vibe-learning-notes-card'
+export const DVL_INTERACTION_DIALOG_ID = 'dvl-interaction-dialog'
 
 // --- HTTP 路由 ---
 
