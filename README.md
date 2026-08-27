@@ -7,7 +7,7 @@
 ## 使用
 
 ```sh
-dsh plugin --profile web add /pathToYour/DshVibeLearning # 添加本插件到你的配置项
+dsh plugin --profile web add dsh-vibe-learning # 添加本插件到你的配置项
 dsh web # 持久生效，直接使用
 ```
 
@@ -25,7 +25,7 @@ config:
 
 ## 已知限制（POC）
 
-- GUI in-band“新开会话”为实验路径（直接 `ctx.agents.create`，未走 preset 组合）。
+- GUI in-band“新开会话”为实验路径（目前不可用）。
 - 复习到期为被动提醒（每轮快照 + GUI）；无后台定时推送。
 - 大纲并发编辑无 CAS（tmp+rename 原子写，last-wins）。
 
