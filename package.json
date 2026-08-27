@@ -1,6 +1,6 @@
 {
   "name": "dsh-vibe-learning",
-  "version": "0.3.0-eap.2",
+  "version": "0.3.5-eap.1",
   "description": "Vibe Learning，DeepSeek Harness 的一款氛围学习插件",
 
   "type": "module",
