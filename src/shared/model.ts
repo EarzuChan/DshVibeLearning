@@ -1,6 +1,6 @@
 // DVL 的持久业务模型。业务实体持有工件，工件与 Run 不反向声明归属
 
-import type {ArtifactHash, ArtifactTarget} from './artifacts.ts'
+import type {ArtifactId, ArtifactTarget} from './artifacts.ts'
 
 export type OutlinePhase = 'not-started' | 'learning' | 'qa' | 'completed'
 
@@ -46,7 +46,7 @@ export interface ReviewPlanRound {
   readonly state: 'active' | 'completed'
   readonly startedAt: string
   readonly completedAt?: string
-  readonly artifactHash?: ArtifactHash
+  readonly artifactId?: ArtifactId
 }
 
 export interface ReviewPlan {
@@ -62,7 +62,7 @@ export interface TemporaryReviewPlanRound {
   readonly outlineId: string
   readonly lessonId: string
   readonly startedAt: string
-  readonly artifactHash?: ArtifactHash
+  readonly artifactId?: ArtifactId
 }
 
 export interface TemporaryReviewPlanRoundManifest {
@@ -86,6 +86,7 @@ export interface ArtifactRunSummary {
 export interface ArtifactSummary extends ArtifactTarget {
   readonly title: string
   readonly modifiedAt: string
+  readonly previewUrl: string // 带预览钥的只读预览地址，由后端签发
   readonly runs: readonly ArtifactRunSummary[]
 }
 

@@ -2,7 +2,7 @@
 
 import {useCallback, useMemo, useState} from 'react'
 import clsx from 'clsx'
-import {Button, IconRefreshOutline14, Modal} from '@deepseek-ai/dsh-client-ui-primitives'
+import {Button, IconRefreshOutlineMedium, Modal} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {LearningViewProps} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
 import type {LearningDataDto} from '../shared/api.ts'
@@ -10,13 +10,13 @@ import type {ArtifactSummary, Outline, OutlineNode, ReviewPlan, ReviewPlanRound}
 import css from './LearningView.module.css'
 
 type Tab = 'outlines' | 'reviews' | 'quizzes'
-type InbandTarget = {kind: 'artifact'; category: ArtifactCategory; hash: string; runId?: string} | {kind: 'due-review'; planId: string}
+type InbandTarget = {kind: 'artifact'; category: ArtifactCategory; artifactId: string; runId?: string} | {kind: 'due-review'; planId: string}
 
 interface ViewFace {
     t: LearningViewProps['t']
     api: LearningViewProps['api']
-    onPreview: (category: ArtifactCategory, hash: string) => void
-    onInband: (category: ArtifactCategory, hash: string, runId?: string) => void
+    onPreview: (category: ArtifactCategory, artifactId: string) => void
+    onInband: (category: ArtifactCategory, artifactId: string, runId?: string) => void
 }
 
 function flattenNodes(nodes: readonly OutlineNode[], depth = 0): Array<{node: OutlineNode; depth: number}> {
@@ -34,8 +34,8 @@ function workflowLabel(outline: Outline): string {
     return outline.workflow.phase === 'learning' ? '学习中' : '答疑中'
 }
 
-function artifactOf(artifacts: readonly ArtifactSummary[], hash?: string): ArtifactSummary | null {
-    return hash === undefined ? null : artifacts.find(artifact => artifact.hash === hash) ?? null
+function artifactOf(artifacts: readonly ArtifactSummary[], artifactId?: string): ArtifactSummary | null {
+    return artifactId === undefined ? null : artifacts.find(artifact => artifact.artifactId === artifactId) ?? null
 }
 
 function ArtifactBlock({artifact, category, face, deletable = false}: {artifact: ArtifactSummary; category: ArtifactCategory; face: ViewFace; deletable?: boolean}) {
@@ -47,7 +47,7 @@ function ArtifactBlock({artifact, category, face, deletable = false}: {artifact:
     const createRun = async (): Promise<void> => {
         setCreating(true)
         try {
-            const descriptor = await api.createDirectRun(category, artifact.hash)
+            const descriptor = await api.createDirectRun(category, artifact.artifactId)
             window.open(descriptor.url, '_blank', 'noopener')
         } finally {
             setCreating(false)
@@ -63,10 +63,10 @@ function ArtifactBlock({artifact, category, face, deletable = false}: {artifact:
                     <span className={css.outlineMeta}>{new Date(artifact.modifiedAt).toLocaleString()}</span>
                 </div>
                 <div className={css.artifactActions}>
-                    <Button size="sm" variant="outline" onClick={() => onPreview(category, artifact.hash)}>{t('artifact.preview')}</Button>
+                    <Button size="sm" variant="outline" onClick={() => onPreview(category, artifact.artifactId)}>{t('artifact.preview')}</Button>
                     {activeRuns.length === 0 && <Button size="sm" variant="outline" disabled={creating} onClick={() => void createRun()}>{creating ? t('state.loading') : '新作答'}</Button>}
-                    {activeRuns.length === 0 && <Button size="sm" variant="primary" onClick={() => onInband(category, artifact.hash)}>{t('artifact.inband')}</Button>}
-                    {deletable && <Button size="sm" variant="ghost" onClick={() => { if (window.confirm(`确定删除工件「${artifact.title}」及其全部作答吗？`)) void api.deleteArtifact(category, artifact.hash) }}>删除</Button>}
+                    {activeRuns.length === 0 && <Button size="sm" variant="primary" onClick={() => onInband(category, artifact.artifactId)}>{t('artifact.inband')}</Button>}
+                    {deletable && <Button size="sm" variant="ghost" onClick={() => { if (window.confirm(`确定删除工件「${artifact.title}」及其全部作答吗？`)) void api.deleteArtifact(category, artifact.artifactId) }}>删除</Button>}
                 </div>
             </div>
 
@@ -79,9 +79,9 @@ function ArtifactBlock({artifact, category, face, deletable = false}: {artifact:
                             <span className={css.outlineMeta}>{new Date(run.modifiedAt).toLocaleString()}</span>
                             {run.hasFeedback && <span className={css.metaBadge}>{t('artifact.run.feedback')}</span>}
                             {run.inBandSessionId !== undefined && <span className={css.metaBadge}>In-band · {run.inBandSessionId.slice(0, 8)}</span>}
-                            {run.state === 'active' && <Button size="sm" variant="outline" onClick={() => api.openRun(category, artifact.hash, run.runId)}>继续作答（在新标签页打开）</Button>}
-                            {run.state === 'active' && run.inBandSessionId === undefined && !hasInband && <Button size="sm" variant="primary" onClick={() => onInband(category, artifact.hash, run.runId)}>交给会话来继续</Button>}
-                            {run.state === 'active' && <Button size="sm" variant="ghost" onClick={() => void api.abortRun(category, artifact.hash, run.runId)}>放弃</Button>}
+                            {run.state === 'active' && <Button size="sm" variant="outline" onClick={() => api.openRun(category, artifact.artifactId, run.runId)}>继续作答（在新标签页打开）</Button>}
+                            {run.state === 'active' && run.inBandSessionId === undefined && !hasInband && <Button size="sm" variant="primary" onClick={() => onInband(category, artifact.artifactId, run.runId)}>交给会话来继续</Button>}
+                            {run.state === 'active' && <Button size="sm" variant="ghost" onClick={() => void api.abortRun(category, artifact.artifactId, run.runId)}>放弃</Button>}
                         </li>
                     ))}
                 </ul>
@@ -127,13 +127,13 @@ function OutlineBlock({outline, state, active, face}: {outline: Outline; state: 
 }
 
 function OutlinesTab({state, activeOutlineId, face}: {state: LearningDataDto; activeOutlineId: string | null; face: ViewFace}) {
-    const orphans = state.lessons.filter(artifact => state.orphanLessonHashes.includes(artifact.hash))
+    const orphans = state.lessons.filter(artifact => state.orphanLessonIds.includes(artifact.artifactId))
     return (
         <div className={css.section}>
             {state.outlines.length === 0 && <div className={css.empty}>{face.t('outlines.empty')}</div>}
             {state.outlines.map(outline => <OutlineBlock key={outline.id} outline={outline} state={state} active={outline.id === activeOutlineId} face={face}/>)}
             {orphans.length > 0 && <h3 className={css.blockLabel}>游离课程工件</h3>}
-            {orphans.map(artifact => <ArtifactBlock key={artifact.hash} artifact={artifact} category="lessons" face={face} deletable/>)}
+            {orphans.map(artifact => <ArtifactBlock key={artifact.artifactId} artifact={artifact} category="lessons" face={face} deletable/>)}
         </div>
     )
 }
@@ -146,14 +146,14 @@ function ReviewPlanBlock({plan, face, onStart}: {plan: ReviewPlan; face: ViewFac
     const round = activeRound(plan)
     const dueAt = String(plan.card.due)
     const due = round === null && !Number.isNaN(Date.parse(dueAt)) && Date.parse(dueAt) <= Date.now()
-    return <div className={css.artifactBlock}><div className={css.cardRow}><span className={css.cardId}>{plan.lessonId}</span><span className={css.cardHistory}>{plan.rounds.filter(item => item.state === 'completed').length} 次已完成</span><span className={css.cardDue}>{round !== null ? `进行中 · ${round.id}` : due ? '已到期' : `计划于 ${new Date(dueAt).toLocaleString()}`}</span>{round === null && due && <Button size="sm" variant="primary" onClick={() => onStart(plan.id)}>开始复习</Button>}<Button size="sm" variant="outline" onClick={() => { if (window.confirm('删除计划并把历史工件转入临时复习区吗？')) void face.api.deleteReviewPlan(plan.id, true) }}>保留工件并删除计划</Button><Button size="sm" variant="ghost" onClick={() => { if (window.confirm('删除计划及其独占历史工件吗？')) void face.api.deleteReviewPlan(plan.id, false) }}>全部删除</Button></div><ul className={css.runList}>{plan.rounds.map(item => <li key={item.id} className={css.runRow}><span className={css.runId}>{item.id}</span><span className={css.outlineMeta}>{new Date(item.startedAt).toLocaleString()}</span><span className={css.metaBadge}>{item.state === 'active' ? '进行中' : '已完成'}</span>{item.artifactHash !== undefined && <span className={css.metaBadge}>工件 {item.artifactHash}</span>}{item.completedAt !== undefined && <span className={css.outlineMeta}>{new Date(item.completedAt).toLocaleString()}</span>}</li>)}</ul></div>
+    return <div className={css.artifactBlock}><div className={css.cardRow}><span className={css.cardId}>{plan.lessonId}</span><span className={css.cardHistory}>{plan.rounds.filter(item => item.state === 'completed').length} 次已完成</span><span className={css.cardDue}>{round !== null ? `进行中 · ${round.id}` : due ? '已到期' : `计划于 ${new Date(dueAt).toLocaleString()}`}</span>{round === null && due && <Button size="sm" variant="primary" onClick={() => onStart(plan.id)}>开始复习</Button>}<Button size="sm" variant="outline" onClick={() => { if (window.confirm('删除计划并把历史工件转入临时复习区吗？')) void face.api.deleteReviewPlan(plan.id, true) }}>保留工件并删除计划</Button><Button size="sm" variant="ghost" onClick={() => { if (window.confirm('删除计划及其独占历史工件吗？')) void face.api.deleteReviewPlan(plan.id, false) }}>全部删除</Button></div><ul className={css.runList}>{plan.rounds.map(item => <li key={item.id} className={css.runRow}><span className={css.runId}>{item.id}</span><span className={css.outlineMeta}>{new Date(item.startedAt).toLocaleString()}</span><span className={css.metaBadge}>{item.state === 'active' ? '进行中' : '已完成'}</span>{item.artifactId !== undefined && <span className={css.metaBadge}>工件 {item.artifactId}</span>}{item.completedAt !== undefined && <span className={css.outlineMeta}>{new Date(item.completedAt).toLocaleString()}</span>}</li>)}</ul></div>
 }
 
 function ReviewsTab({state, face, onStart}: {state: LearningDataDto; face: ViewFace; onStart: (planId: string) => void}) {
-    const temporary = new Set(state.temporaryReviews.rounds.flatMap(item => item.artifactHash === undefined ? [] : [item.artifactHash]))
-    const temporaryArtifacts = state.reviews.filter(artifact => temporary.has(artifact.hash))
-    const planned = new Set(state.reviewPlans.flatMap(plan => plan.rounds.flatMap(round => round.artifactHash === undefined ? [] : [round.artifactHash])))
-    const unexplained = state.reviews.filter(artifact => !temporary.has(artifact.hash) && !planned.has(artifact.hash))
+    const temporary = new Set(state.temporaryReviews.rounds.flatMap(item => item.artifactId === undefined ? [] : [item.artifactId]))
+    const temporaryArtifacts = state.reviews.filter(artifact => temporary.has(artifact.artifactId))
+    const planned = new Set(state.reviewPlans.flatMap(plan => plan.rounds.flatMap(round => round.artifactId === undefined ? [] : [round.artifactId])))
+    const unexplained = state.reviews.filter(artifact => !temporary.has(artifact.artifactId) && !planned.has(artifact.artifactId))
 
     return (
         <div className={css.section}>
@@ -161,13 +161,13 @@ function ReviewsTab({state, face, onStart}: {state: LearningDataDto; face: ViewF
             {state.reviewPlans.length === 0 && <div className={css.empty}>暂无复习计划</div>}
             {state.reviewPlans.map(plan => <ReviewPlanBlock key={plan.id} plan={plan} face={face} onStart={onStart}/>)}
             <h3 className={css.blockLabel}>计划期次工件</h3>
-            {state.reviewPlans.flatMap(plan => plan.rounds).flatMap(round => round.artifactHash === undefined ? [] : state.reviews.filter(artifact => artifact.hash === round.artifactHash)).map(artifact => <ArtifactBlock key={artifact.hash} artifact={artifact} category="reviews" face={face}/>)}
+            {state.reviewPlans.flatMap(plan => plan.rounds).flatMap(round => round.artifactId === undefined ? [] : state.reviews.filter(artifact => artifact.artifactId === round.artifactId)).map(artifact => <ArtifactBlock key={artifact.artifactId} artifact={artifact} category="reviews" face={face}/>)}
             <h3 className={css.blockLabel}>临时复习</h3>
-            {state.temporaryReviews.rounds.length > 0 && <ul className={css.runList}>{state.temporaryReviews.rounds.map(round => <li key={round.id} className={css.runRow}><span className={css.runId}>{round.id}</span><span className={css.outlineMeta}>{round.lessonId}</span><span className={css.metaBadge}>{round.artifactHash === undefined ? '待生成工件' : '已绑定工件'}</span>{round.artifactHash !== undefined && <span className={css.metaBadge}>{round.artifactHash}</span>}</li>)}</ul>}
+            {state.temporaryReviews.rounds.length > 0 && <ul className={css.runList}>{state.temporaryReviews.rounds.map(round => <li key={round.id} className={css.runRow}><span className={css.runId}>{round.id}</span><span className={css.outlineMeta}>{round.lessonId}</span><span className={css.metaBadge}>{round.artifactId === undefined ? '待生成工件' : '已绑定工件'}</span>{round.artifactId !== undefined && <span className={css.metaBadge}>{round.artifactId}</span>}</li>)}</ul>}
             {temporaryArtifacts.length === 0 && <div className={css.empty}>暂无临时复习</div>}
-            {temporaryArtifacts.map(artifact => <ArtifactBlock key={artifact.hash} artifact={artifact} category="reviews" face={face} deletable/>)}
+            {temporaryArtifacts.map(artifact => <ArtifactBlock key={artifact.artifactId} artifact={artifact} category="reviews" face={face} deletable/>)}
             {unexplained.length > 0 && <h3 className={css.blockLabel}>未挂载复习工件</h3>}
-            {unexplained.map(artifact => <ArtifactBlock key={artifact.hash} artifact={artifact} category="reviews" face={face} deletable/>)}
+            {unexplained.map(artifact => <ArtifactBlock key={artifact.artifactId} artifact={artifact} category="reviews" face={face} deletable/>)}
         </div>
     )
 }
@@ -175,7 +175,7 @@ function ReviewsTab({state, face, onStart}: {state: LearningDataDto; face: ViewF
 export function LearningView(props: LearningViewProps) {
     const {api, useLearning, useProjection, useStore, actions, t, sessionId} = props
     const learning = useLearning(source => source.learning)
-    const projection = useProjection('dvlLearning') ?? {entered: false, activeOutlineId: null}
+    const projection = useProjection('dvlLearning') ?? {entered: false, activeOutlineId: null, delegatedFrom: null}
     const tab = useStore(state => state.tab)
     const preview = useStore(state => state.preview)
     const [refreshing, setRefreshing] = useState(false)
@@ -192,15 +192,14 @@ export function LearningView(props: LearningViewProps) {
         }
     }, [api])
 
-    const onPreview = (category: ArtifactCategory, hash: string): void => actions.setPreview(preview?.category === category && preview.hash === hash ? null : {category, hash})
-    const face: ViewFace = {t, api, onPreview, onInband: (category, hash, runId) => setInbandTarget({kind: 'artifact', category, hash, ...(runId === undefined ? {} : {runId})})}
+    const onPreview = (category: ArtifactCategory, artifactId: string): void => actions.setPreview(preview?.category === category && preview.artifactId === artifactId ? null : {category, artifactId})
+    const face: ViewFace = {t, api, onPreview, onInband: (category, artifactId, runId) => setInbandTarget({kind: 'artifact', category, artifactId, ...(runId === undefined ? {} : {runId})})}
 
     const confirmInband = async (targetSessionId: string): Promise<void> => {
         if (inbandTarget === null) return
 
-        // FIXME：新开会话不能保证新开，有BUG！
         try {
-            if (inbandTarget.kind === 'artifact') await api.inbandPresentExisting(inbandTarget.category, inbandTarget.hash, targetSessionId, inbandTarget.runId)
+            if (inbandTarget.kind === 'artifact') await api.inbandPresentExisting(inbandTarget.category, inbandTarget.artifactId, targetSessionId, inbandTarget.runId)
             else await api.startDueReview(inbandTarget.planId, targetSessionId)
         } finally {
             setInbandTarget(null)
@@ -213,14 +212,14 @@ export function LearningView(props: LearningViewProps) {
                 <nav className={css.tabs} role="tablist" aria-label={t('view.label')}>
                     {([['outlines', 'tab.outlines'], ['reviews', 'tab.reviews'], ['quizzes', 'tab.quizzes']] as const).map(([id, key]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={clsx(css.tab, tab === id && css.tabActive)} onClick={() => actions.setTab(id as Tab)}>{t(key)}</button>)}
                 </nav>
-                <Button size="sm" variant="ghost" icon={<IconRefreshOutline14/>} disabled={refreshing} onClick={() => void refresh()}>{refreshing ? t('toolbar.refreshing') : t('toolbar.refresh')}</Button>
+                <Button size="sm" variant="ghost" icon={<IconRefreshOutlineMedium/>} disabled={refreshing} onClick={() => void refresh()}>{refreshing ? t('toolbar.refreshing') : t('toolbar.refresh')}</Button>
             </header>
 
             <div className={css.body}>
-                {learning.phase === 'error' ? <div className={css.status}>{learning.error ?? t('state.error')}</div> : learning.data === null ? <div className={css.status}>{t('state.loading')}</div> : tab === 'outlines' ? <OutlinesTab state={learning.data} activeOutlineId={projection.activeOutlineId} face={face}/> : tab === 'reviews' ? <ReviewsTab state={learning.data} face={face} onStart={planId => setInbandTarget({kind: 'due-review', planId})}/> : <div className={css.section}>{learning.data.quizzes.length === 0 && <div className={css.empty}>暂无小测工件</div>}{learning.data.quizzes.map(artifact => <ArtifactBlock key={artifact.hash} artifact={artifact} category="quizzes" face={face} deletable/>)}</div>}
+                {learning.phase === 'error' ? <div className={css.status}>{learning.error ?? t('state.error')}</div> : learning.data === null ? <div className={css.status}>{t('state.loading')}</div> : tab === 'outlines' ? <OutlinesTab state={learning.data} activeOutlineId={projection.activeOutlineId} face={face}/> : tab === 'reviews' ? <ReviewsTab state={learning.data} face={face} onStart={planId => setInbandTarget({kind: 'due-review', planId})}/> : <div className={css.section}>{learning.data.quizzes.length === 0 && <div className={css.empty}>暂无小测工件</div>}{learning.data.quizzes.map(artifact => <ArtifactBlock key={artifact.artifactId} artifact={artifact} category="quizzes" face={face} deletable/>)}</div>}
             </div>
 
-            {preview !== null && <div className={css.preview}><div className={css.previewHeader}><span className={css.previewLabel}>只读预览</span><Button size="sm" variant="ghost" onClick={() => actions.setPreview(null)}>{t('artifact.previewClose')}</Button></div><iframe className={css.previewFrame} src={api.artifactUrl(preview.category, preview.hash)} title={t('artifact.preview')} sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups" allow="clipboard-write"/></div>}
+            {preview !== null && <div className={css.preview}><div className={css.previewHeader}><span className={css.previewLabel}>只读预览</span><Button size="sm" variant="ghost" onClick={() => actions.setPreview(null)}>{t('artifact.previewClose')}</Button></div><iframe className={css.previewFrame} src={api.artifactUrl(preview.category, preview.artifactId)} title={t('artifact.preview')} sandbox="allow-scripts allow-forms allow-modals allow-popups" allow="clipboard-write"/></div>}
 
             <Modal open={inbandTarget !== null} onClose={() => setInbandTarget(null)} closeLabel={t('notes.cancel')} title={t('artifact.inband.dialog.title')} footer={<><Button variant="outline" onClick={() => setInbandTarget(null)}>{t('notes.cancel')}</Button><Button variant="primary" disabled={currentSessionHasInband} onClick={() => void confirmInband(String(sessionId))}>{t('artifact.inband.current')}</Button><Button variant="outline" onClick={() => void confirmInband('')}>{t('artifact.inband.new')}</Button></>}><p className={css.inbandHint}>{currentSessionHasInband ? '当前会话已有 In-band 呈现，可改用新会话' : '选择承接本次模型参与流程的会话'}</p></Modal>
         </div>

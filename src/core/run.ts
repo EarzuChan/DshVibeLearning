@@ -1,17 +1,22 @@
-// Durable Run、终局文件、临时复用键与 outcome 等待
+// Durable Run、终局文件、临时复用键与 outcome 等待。Run 只承诺在创建它的进程内有效：重启后未终结的 Run 在被读到时判为 aborted
 
 import {randomUUID} from 'node:crypto'
-import {mkdir, stat} from 'node:fs/promises'
+import {copyFile, mkdir, readFile, stat} from 'node:fs/promises'
 import type {ArtifactKind} from '../shared/artifacts.ts'
 import type {ArtifactRunSummary, FeedbackEnvelope, RunOutcome} from '../shared/model.ts'
 import {ArtifactStore} from './artifact.ts'
-import {isDirectory, LearningFiles, listDirectories, readJson, writeJson, writeJsonOnce} from './files.ts'
+import {isDirectory, isEnoent, LearningFiles, listDirectories, readJson, writeJson, writeJsonOnce} from './files.ts'
 import type {ArtifactRef, RunRef, RunReuseKey} from './types.ts'
 
 type OutcomeListener = (outcome: RunOutcome) => void
 
+// 本进程的启动标记，写进每个 Run 目录
+const BOOT_ID = randomUUID()
+
+const STALE_RUN_REASON = '进程已重启，本次 Run 随之失效'
+
 function artifactKey(ref: ArtifactRef): string {
-    return `${ref.cwd}\u0000${ref.kind}\u0000${ref.hash}`
+    return `${ref.cwd}\u0000${ref.kind}\u0000${ref.artifactId}`
 }
 
 function runKey(ref: RunRef): string {
@@ -32,15 +37,34 @@ export class RunStore {
     }
 
     async exists(ref: RunRef): Promise<boolean> {
-        return isDirectory(this.files(ref.cwd).runDir(ref.kind, ref.hash, ref.runId))
+        return isDirectory(this.files(ref.cwd).runDir(ref.kind, ref.artifactId, ref.runId))
     }
 
+    // 读取终局；未终结但属于其他进程的 Run 会在此惰性落盘为 aborted
     async outcome(ref: RunRef): Promise<RunOutcome | null> {
-        return readJson<RunOutcome>(this.files(ref.cwd).outcomeFile(ref.kind, ref.hash, ref.runId))
+        const files = this.files(ref.cwd)
+        const durable = await readJson<RunOutcome>(files.outcomeFile(ref.kind, ref.artifactId, ref.runId))
+        if (durable !== null) return durable
+
+        const boot = await readJson<{bootId?: unknown}>(files.runBootFile(ref.kind, ref.artifactId, ref.runId))
+        if (boot?.bootId === BOOT_ID || !await this.exists(ref)) return null
+
+        await writeJsonOnce(files.outcomeFile(ref.kind, ref.artifactId, ref.runId), {state: 'aborted', reason: STALE_RUN_REASON} satisfies RunOutcome)
+        return readJson<RunOutcome>(files.outcomeFile(ref.kind, ref.artifactId, ref.runId))
+    }
+
+    // 读取 Run 创建时冻结的工件副本
+    async frozenHtml(ref: RunRef): Promise<string | null> {
+        try {
+            return await readFile(this.files(ref.cwd).runArtifactHtml(ref.kind, ref.artifactId, ref.runId), 'utf8')
+        } catch (error: unknown) {
+            if (isEnoent(error)) return null
+            throw error
+        }
     }
 
     async obtain(artifact: ArtifactRef, key?: RunReuseKey, preferredRunId?: string): Promise<RunRef> {
-        if (!await new ArtifactStore(this.files(artifact.cwd)).exists(artifact.kind, artifact.hash)) throw new Error(`工件不存在：${artifact.kind}/${artifact.hash}`)
+        if (!await new ArtifactStore(this.files(artifact.cwd)).exists(artifact.kind, artifact.artifactId)) throw new Error(`工件不存在：${artifact.kind}/${artifact.artifactId}`)
         if (preferredRunId !== undefined && key === undefined) throw new Error('指定既有 Run 时必须同时提供复用键')
         if (key === undefined) return this.create(artifact)
 
@@ -76,16 +100,21 @@ export class RunStore {
     }
 
     async create(artifact: ArtifactRef): Promise<RunRef> {
+        const files = this.files(artifact.cwd)
         const run = {...artifact, runId: randomUUID()}
-        await mkdir(this.files(artifact.cwd).runsDir(artifact.kind, artifact.hash), {recursive: true})
-        await mkdir(this.files(artifact.cwd).runDir(artifact.kind, artifact.hash, run.runId), {recursive: false})
+
+        await mkdir(files.runsDir(artifact.kind, artifact.artifactId), {recursive: true})
+        await mkdir(files.runDir(artifact.kind, artifact.artifactId, run.runId), {recursive: false})
+
+        await copyFile(files.artifactHtml(artifact.kind, artifact.artifactId), files.runArtifactHtml(artifact.kind, artifact.artifactId, run.runId))
+        await writeJson(files.runBootFile(artifact.kind, artifact.artifactId, run.runId), {bootId: BOOT_ID})
         return run
     }
 
     async finish(ref: RunRef, outcome: RunOutcome): Promise<{outcome: RunOutcome; alreadyFinished: boolean}> {
         if (!await this.exists(ref)) throw new Error(`Run 不存在：${ref.runId}`)
 
-        const wrote = await writeJsonOnce(this.files(ref.cwd).outcomeFile(ref.kind, ref.hash, ref.runId), outcome)
+        const wrote = await writeJsonOnce(this.files(ref.cwd).outcomeFile(ref.kind, ref.artifactId, ref.runId), outcome)
 
         const durable = wrote ? outcome : await this.outcome(ref)
         if (durable === null) throw new Error(`Run ${ref.runId} 的终局写入失败`)
@@ -100,13 +129,13 @@ export class RunStore {
         if (outcome?.state !== 'completed') throw new Error(`Run ${ref.runId} 尚未完成，不能保存批改`)
 
         const feedback: FeedbackEnvelope = {payload}
-        await writeJson(this.files(ref.cwd).feedbackFile(ref.kind, ref.hash, ref.runId), feedback)
+        await writeJson(this.files(ref.cwd).feedbackFile(ref.kind, ref.artifactId, ref.runId), feedback)
 
         return feedback
     }
 
     async feedback(ref: RunRef): Promise<FeedbackEnvelope | null> {
-        return readJson<FeedbackEnvelope>(this.files(ref.cwd).feedbackFile(ref.kind, ref.hash, ref.runId))
+        return readJson<FeedbackEnvelope>(this.files(ref.cwd).feedbackFile(ref.kind, ref.artifactId, ref.runId))
     }
 
     async wait(ref: RunRef, options: {signal?: AbortSignal; timeoutMs: number}): Promise<RunOutcome | 'timed-out' | 'interrupted'> {
@@ -139,13 +168,13 @@ export class RunStore {
         })
     }
 
-    async list(kind: ArtifactKind, hash: string, cwd: string): Promise<ArtifactRunSummary[]> {
+    async list(kind: ArtifactKind, artifactId: string, cwd: string): Promise<ArtifactRunSummary[]> {
         const files = this.files(cwd)
         const runs: ArtifactRunSummary[] = []
-        for (const runId of await listDirectories(files.runsDir(kind, hash))) {
-            const ref = {cwd, kind, hash, runId}
+        for (const runId of await listDirectories(files.runsDir(kind, artifactId))) {
+            const ref = {cwd, kind, artifactId, runId}
             const outcome = await this.outcome(ref)
-            const modifiedAt = (await stat(outcome === null ? files.runDir(kind, hash, runId) : files.outcomeFile(kind, hash, runId))).mtime.toISOString()
+            const modifiedAt = (await stat(outcome === null ? files.runDir(kind, artifactId, runId) : files.outcomeFile(kind, artifactId, runId))).mtime.toISOString()
             runs.push({runId, state: outcome?.state ?? 'active', hasFeedback: await this.feedback(ref) !== null, modifiedAt})
         }
         return runs.sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt))

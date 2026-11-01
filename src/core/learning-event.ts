@@ -1,41 +1,68 @@
-// 氛围学习会话事件的唯一事件入口：事件构造与追加只允许发生在本文件，其他地方不直接触碰事件相关
+// 氛围学习会话记录的唯一入口：记录的构造、追加与解析只允许发生在本文件，其他地方不直接触碰会话日志
 
-import type {Session, SessionEvent} from '@deepseek-ai/dsh-session'
+import {z} from 'zod'
+import {appendPluginRecord, pluginRecordOf, type Session, type SessionEvent} from '@deepseek-ai/dsh-session'
 
-// 借用官方'feedback/record'事件来当我们的真事件“外壳”。为什么要这样？因为目前自定义事件会被，即使是`0.1.1-rc.2`，在重开会话时“吃拿卡要”（会话被判有误，拒绝进一步加载）
+// 采用 DSH 的插件记录（带 ignorable 标记的 `plugin:` 命名空间事件）：不认识它的构建会保留并跳过，卸载本插件也不会让会话无法加载
+const ENTER = 'plugin:dsh-vibe-learning/enter'
+const CHANGE_OUTLINE = 'plugin:dsh-vibe-learning/change-outline'
+const DELEGATE = 'plugin:dsh-vibe-learning/delegate'
+
 declare module '@deepseek-ai/dsh-session/types' {
-    interface SessionEventMap {
-        'feedback/record': { text: string } // text的内容，是届时我们真正的“事件”
+    interface PluginRecordMap {
+        /** 本会话进入氛围学习 */
+        'plugin:dsh-vibe-learning/enter': Record<string, never>
+        /** 本会话激活纲目的切换，null 表示明确没有激活纲目 */
+        'plugin:dsh-vibe-learning/change-outline': {readonly outlineId: string | null}
+        /** 本会话是某个学习会话派出的子代理，只负责创作工件 */
+        'plugin:dsh-vibe-learning/delegate': {readonly rootSessionId: string}
     }
 }
 
-// ---入---
+// 已存记录的载荷可能来自旧构建，使用前一律校验
+const changeOutlineSchema = z.object({outlineId: z.string().min(1).nullable()})
+const delegateSchema = z.object({rootSessionId: z.string().min(1)})
 
-const LEARNING_ENTERED_TEXT = 'learning/enter'
+// ---入---
 
 // 记录当前会话进入氛围学习
 export function recordLearningEnteredToSession(session: Session): void {
-    session.append('feedback/record', {text: LEARNING_ENTERED_TEXT})
+    appendPluginRecord(session, ENTER, {})
 }
 
-// 事件是否为氛围学习进入标记
+// 事件是否为氛围学习进入记录
 export function isLearningEntered(event: SessionEvent): boolean {
-    return event.type === 'feedback/record' && event.data.text === LEARNING_ENTERED_TEXT
+    return pluginRecordOf(event)?.type === ENTER
 }
 
 // ---纲---
 
-const CHANGE_OUTLINE_PREFIX = 'learning/change-outline:'
-
-// 记录当前会话激活纲目的切换。null 表示明确没有激活纲目
+// 记录当前会话激活纲目的切换
 export function recordLearningOutlineChangeToSession(session: Session, outlineId: string | null): void {
-    session.append('feedback/record', {text: `${CHANGE_OUTLINE_PREFIX}${outlineId ?? 'null'}`})
+    appendPluginRecord(session, CHANGE_OUTLINE, {outlineId})
 }
 
-// 从事件中解析当前会话激活纲目
+// 从事件中解析当前会话激活纲目；undefined 表示非我记录或载荷无效
 export function parseLearningChangeOutline(event: SessionEvent): string | null | undefined {
-    if (event.type !== 'feedback/record' || !event.data.text.startsWith(CHANGE_OUTLINE_PREFIX)) return undefined // 非我事件
+    const record = pluginRecordOf(event)
+    if (record?.type !== CHANGE_OUTLINE) return undefined
 
-    const value = event.data.text.slice(CHANGE_OUTLINE_PREFIX.length)
-    return value === 'null' ? null : value
+    const parsed = changeOutlineSchema.safeParse(record.data)
+    return parsed.success ? parsed.data.outlineId : undefined
+}
+
+// ---子代理---
+
+// 记录当前会话是学习会话派出的子代理
+export function recordLearningDelegateToSession(session: Session, rootSessionId: string): void {
+    appendPluginRecord(session, DELEGATE, {rootSessionId})
+}
+
+// 从事件中解析子代理所属的学习根会话；undefined 表示非我记录或载荷无效
+export function parseLearningDelegate(event: SessionEvent): string | undefined {
+    const record = pluginRecordOf(event)
+    if (record?.type !== DELEGATE) return undefined
+
+    const parsed = delegateSchema.safeParse(record.data)
+    return parsed.success ? parsed.data.rootSessionId : undefined
 }

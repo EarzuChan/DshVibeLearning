@@ -3,8 +3,11 @@
     - id: dsh-vibe-learning
       name: dsh-vibe-learning
 
-# 用以打日志，FIXME：现在还没法用，要等修复
+# 需要看 DVL 的关键日志时取消注释（需另行安装 @deepseek-ai/cordis-plugin-logger-console）
+# levels.default：1 只看错误，2 含信息与警告，3 含调试
 #- insert:
 #    - id: logger-console
 #      name: '@deepseek-ai/cordis-plugin-logger-console'
-#      immediately: true
+#      config:
+#        levels:
+#          default: 2

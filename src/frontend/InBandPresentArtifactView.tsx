@@ -1,7 +1,7 @@
 // present_artifact 工具视图：主体跟随 Tool Call，Run 只作为该调用当前或最后一次呈现的附属事实
 
 import {useEffect, useState} from 'react'
-import type {ToolResultNode} from '@deepseek-ai/dsh-client-runtime/client'
+import type {ToolResultNode} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {PresentToolViewProps} from './contract.ts'
 import type {ArtifactRunDescriptor} from '../shared/api.ts'
 import css from './PresentArtifactToolView.module.css'
@@ -30,7 +30,8 @@ function metaDescriptorOf(block: ToolResultNode): ArtifactRunDescriptor | null {
     return descriptor.version === 2 && typeof descriptor.url === 'string' && typeof descriptor.runId === 'string' ? descriptor : null
 }
 
-const FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups'
+// 不给 allow-same-origin：工件页在不透明源里运行，碰不到宿主页面的凭据与同源接口
+const FRAME_SANDBOX = 'allow-scripts allow-forms allow-modals allow-popups'
 
 export function InBandPresentArtifactView({callId, block, cwd, t, resolveDescriptor, abortRun}: PresentToolViewProps) {
     const settled = 'kind' in block

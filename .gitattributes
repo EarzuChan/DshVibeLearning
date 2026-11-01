@@ -1,0 +1,17 @@
+# 统一换行：仓库与工作区一律 LF，Windows 与 macOS 下行为一致，不受 core.autocrlf 影响
+* text=auto eol=lf
+
+# Windows 专用脚本保持 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary

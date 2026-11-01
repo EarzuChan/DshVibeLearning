@@ -1,6 +1,6 @@
 import type {ArtifactCategory, ArtifactTarget} from './artifacts.ts'
 import type {ArtifactSummary, Note, NoteFolder, Outline, ReviewPlan, TemporaryReviewPlanRoundManifest} from './model.ts'
-import type {JsonValue} from '@deepseek-ai/dsh-session'
+import type {JsonValue} from './json.ts'
 
 export type InteractionContent = {readonly kind: 'markdown'; readonly text: string} | {readonly kind: 'json'; readonly value: JsonValue}
 
@@ -37,7 +37,7 @@ export interface LearningDataDto {
   readonly outlines: readonly Outline[]
   readonly reviewPlans: readonly ReviewPlan[]
   readonly temporaryReviews: TemporaryReviewPlanRoundManifest
-  readonly orphanLessonHashes: readonly string[]
+  readonly orphanLessonIds: readonly string[]
   readonly lessons: readonly ArtifactSummary[]
   readonly reviews: readonly ArtifactSummary[]
   readonly quizzes: readonly ArtifactSummary[]
@@ -55,11 +55,10 @@ export interface LearningWorkspaceDto {
   readonly isLearningWorkspace: boolean
 }
 
-export type InbandPresentRequest = {readonly intent: 'present-existing'; readonly workspaceId: string; readonly category: ArtifactCategory; readonly hash: string; readonly runId?: string; readonly sessionId: string} | {readonly intent: 'start-due-review'; readonly workspaceId: string; readonly planId: string; readonly sessionId: string}
+export type InbandPresentRequest = {readonly intent: 'present-existing'; readonly workspaceId: string; readonly category: ArtifactCategory; readonly artifactId: string; readonly runId?: string; readonly sessionId: string; readonly sourceSessionId: string} | {readonly intent: 'start-due-review'; readonly workspaceId: string; readonly planId: string; readonly sessionId: string; readonly sourceSessionId: string}
 
 export interface InbandPresentResult {
   readonly ok: boolean
-  readonly mode: 'current-session' | 'new-session'
   readonly sessionId: string
   readonly error?: string
 }
@@ -67,7 +66,7 @@ export interface InbandPresentResult {
 export interface DirectRunRequest {
   readonly workspaceId: string
   readonly category: ArtifactCategory
-  readonly hash: string
+  readonly artifactId: string
 }
 
 export interface AbortRunRequest extends DirectRunRequest {
@@ -75,4 +74,4 @@ export interface AbortRunRequest extends DirectRunRequest {
   readonly reason?: string
 }
 
-export type DeleteLearningEntityRequest = {readonly target: 'outline'; readonly id: string} | {readonly target: 'review-plan'; readonly id: string; readonly preserveArtifacts: boolean} | {readonly target: 'artifact'; readonly category: ArtifactCategory; readonly hash: string}
+export type DeleteLearningEntityRequest = {readonly target: 'outline'; readonly id: string} | {readonly target: 'review-plan'; readonly id: string; readonly preserveArtifacts: boolean} | {readonly target: 'artifact'; readonly category: ArtifactCategory; readonly artifactId: string}

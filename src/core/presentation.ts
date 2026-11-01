@@ -8,7 +8,7 @@
 import type {InBandLease, RunRef} from './types.ts'
 
 function runKey(run: RunRef): string {
-    return `${run.cwd}\u0000${run.kind}\u0000${run.hash}\u0000${run.runId}`
+    return `${run.cwd}\u0000${run.kind}\u0000${run.artifactId}\u0000${run.runId}`
 }
 
 interface PendingInBandLease {

@@ -1,16 +1,19 @@
 // DVL 服务装配：会话 bootstrap、领域 facade、数据变更发布与 URL 投影
 
+import {createHmac, randomBytes, timingSafeEqual} from 'node:crypto'
 import {homedir} from 'node:os'
 import {join} from 'node:path'
 import {Service, type Context} from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-session-projection'
+import type {ProjectionHandle} from '@deepseek-ai/dsh-session-projection'
+import type {} from '@deepseek-ai/dsh-tools'
+import {SessionId as brandSessionId} from '@deepseek-ai/dsh-session'
 import z from '@deepseek-ai/schemastery'
 import type {Agent} from '@deepseek-ai/dsh-agent'
-import {createUserMessage} from '@deepseek-ai/dsh-llm'
+import {boundContextSummary, createUserMessage, type ContextFormed} from '@deepseek-ai/dsh-llm'
 import {installLearnCommand} from '../command/index.ts'
-import type {ArtifactHash, ArtifactKind} from '../shared/artifacts.ts'
+import type {ArtifactId, ArtifactKind} from '../shared/artifacts.ts'
 import {ARTIFACT_CATEGORY_BY_KIND} from '../shared/artifacts.ts'
-import {CORDIS_CONTEXT_LEARNING, CORDIS_EFFECT_AGENT_TOOLS, CORDIS_SECTION_SNAPSHOT, DVL_SERVER_ROUTE_PREFIX} from '../shared/constants.ts'
+import {CORDIS_CONTEXT_LEARNING, CORDIS_SECTION_SNAPSHOT, DVL_SERVER_ROUTE_PREFIX} from '../shared/constants.ts'
 import type {ArtifactSummary, Outline, OutlineNode, OutlinePhase, ReviewPlan, ReviewRating, RunOutcome, TemporaryReviewPlanRoundManifest} from '../shared/model.ts'
 import type {SessionDvlLearningState} from '../shared/projection.ts'
 import {installCourseAuthoringSkill} from '../skill/index.ts'
@@ -19,15 +22,15 @@ import {installLearningTools} from '../tool/index.ts'
 import {recordWorkspaceHashIdByGeneratingItFromItsCwd} from '../the-so-called-backend/workspace-hash-id-related.ts'
 import {ArtifactStore} from './artifact.ts'
 import {DataChangeBus} from './data-change-bus.ts'
-import {isValidArtifactHash, LearningFiles} from './files.ts'
+import {isValidArtifactId, LearningFiles} from './files.ts'
 import {generateWorkspaceHashIdOf, isSafeSegment} from '../util/identifiers.ts'
-import {recordLearningEnteredToSession, recordLearningOutlineChangeToSession} from './learning-event.ts'
+import {recordLearningDelegateToSession, recordLearningEnteredToSession, recordLearningOutlineChangeToSession} from './learning-event.ts'
 import {NotesStore} from './notes.ts'
-import {findOutlineLesson, outlineArtifactHashes, OutlineStore, type OutlineInput} from './outline.ts'
+import {findOutlineLesson, outlineArtifactIds, OutlineStore, type OutlineInput} from './outline.ts'
 import {InBandPresentationRegistry} from './presentation.ts'
 import {InteractionService} from './interaction.ts'
 import {dvlLearningProjection} from './projection.ts'
-import {BOOT_LINE, FULL_GUIDE, renderSnapshot} from './prompt.ts'
+import {AUTHOR_GUIDE, BOOT_LINE, FULL_GUIDE, renderSnapshot} from './prompt.ts'
 import {ReviewPlanStore, type PreparedReviewPlan, type ReviewPlanCreationInput} from './review-plan.ts'
 import {RunStore} from './run.ts'
 import type {ArtifactRef, ArtifactRunDescriptor, LearningSnapshot, PresentOutcome, RunRef} from './types.ts'
@@ -39,16 +42,33 @@ declare module '@deepseek-ai/cordis' {
     }
 }
 
+// DVL 注入会话的消息来源，按 DSH 约定由生产方自行声明
+declare module '@deepseek-ai/dsh-llm' {
+    interface MessageSourceMap {
+        'dsh-vibe-learning': {kind: 'dsh-vibe-learning'} & ContextFormed
+    }
+}
+
 // TIPS：插件总配置
 export interface Config {
     readonly dataDir?: string
     readonly presentTimeoutMs?: number
+    readonly delegationToolNames?: string[]
 }
+
+// 会话在 DVL 中的角色：根学习会话、学习会话派出的创作子代理、与学习无关
+export type LearningAudience = 'root' | 'author' | 'none'
+
+// 官方会派出子代理的工具名，DVL 子代理不得再调用它们（只允许一级子代理）
+const LIVE_AGENT_WAIT_MS = 5_000
+const DEFAULT_DELEGATION_TOOL_NAMES = ['subagent', 'subagent_fork', 'subagent_oar', 'ralph', 'spawn_teammate']
+
+const EMPTY_STATE: SessionDvlLearningState = {entered: false, activeOutlineId: null, delegatedFrom: null}
 
 // ---实用小造---
 
-function noticeMessage(text: string) {
-    return createUserMessage({content: [{type: 'text', text}], source: {kind: 'plugin', plugin: 'learning'}})
+function noticeMessage(summary: string, text: string) {
+    return createUserMessage({content: [{type: 'text', text}], source: {kind: 'dsh-vibe-learning', form: 'notice', summary: boundContextSummary(summary)}})
 }
 
 function errorText(error: unknown): string {
@@ -57,7 +77,7 @@ function errorText(error: unknown): string {
 
 // TIPS：核心服务
 export class LearningService extends Service {
-    static Config: z<Config> = z.object({dataDir: z.string().default(join(homedir(), '.dsh-vibe-learning')), presentTimeoutMs: z.number().default(3_600_000)})
+    static Config: z<Config> = z.object({dataDir: z.string().default(join(homedir(), '.dsh-vibe-learning')), presentTimeoutMs: z.number().default(3_600_000), delegationToolNames: z.array(z.string()).default(DEFAULT_DELEGATION_TOOL_NAMES)})
 
     readonly notes: NotesStore
     readonly dataChanges = new DataChangeBus()
@@ -65,8 +85,8 @@ export class LearningService extends Service {
     readonly inBandPresentations = new InBandPresentationRegistry()
     readonly interactions = new InteractionService()
 
-    private readonly learningToolsEnabledAgents = new WeakSet<Agent>() // 已被安工具的会话
-
+    private projection: ProjectionHandle<SessionDvlLearningState> | undefined
+    private readonly previewSecret = randomBytes(32) // 每个进程一份，用于签发只读预览凭证
 
     // 外围能力仍各自实现，LearningService 只统一拥有其安装与卸载生命周期
     private installEssentialCapabilities(ctx: Context): void {
@@ -76,6 +96,18 @@ export class LearningService extends Service {
         ctx.inject(['skills'], (scope: Context) => installCourseAuthoringSkill(scope))
 
         ctx.inject(['agents', 'webServer'], (scope: Context) => installLearningRoutes(scope, this))
+
+        // 工具全局注册一次，由 when 条件决定只对学习会话及其创作子代理声明
+        ctx.inject(['tools'], (scope: Context) => installLearningTools(scope, this))
+
+        // 只允许一级子代理：DVL 子代理调用派出子代理的工具时一律拒绝
+        ctx.inject(['tools'], (scope: Context) => {
+            scope.on('tools/pre-execute', async (exec, next) => {
+                const names = this.config.delegationToolNames ?? DEFAULT_DELEGATION_TOOL_NAMES
+                if (exec.agent !== undefined && names.includes(exec.name) && this.audienceOf(exec.agent) === 'author') return {kind: 'deny', reason: '你是氛围学习派出的创作子代理，只负责完成交给你的工件创作，不能再派出下级子代理'}
+                return next()
+            })
+        })
     }
 
     // 普通ctor
@@ -86,27 +118,42 @@ export class LearningService extends Service {
 
         this.installEssentialCapabilities(ctx)
 
+        // 系统提示词按会话角色分三档；与学习无关的子代理不注入任何内容
         ctx.inject(['systemPrompt'], (scope: Context) => {
             scope.systemPrompt.context({name: CORDIS_CONTEXT_LEARNING, order: 130, text: context => {
                 const agent = context.agent
-                return agent === undefined ? '' : this.getCurrentSessionDvlLearningState(agent).entered ? FULL_GUIDE : BOOT_LINE
+                if (agent === undefined) return ''
+
+                const audience = this.audienceOf(agent)
+                if (audience === 'root') return FULL_GUIDE
+                if (audience === 'author') return AUTHOR_GUIDE
+                return agent.session.header.origin === 'subagent' ? '' : BOOT_LINE
             }})
         })
 
-        ctx.inject(['sessionProjections'], (scope: Context) => { scope.sessionProjections.register(dvlLearningProjection) })
-
-        // 这个是确保工具挂载的：以便回放的老对话可用
-        ctx.on('agent/session-start', ({agent}) => {
-            if (this.getCurrentSessionDvlLearningState(agent).entered) this.ensureLearningToolsMounted(agent)
+        ctx.inject(['sessionProjections'], async (scope: Context) => {
+            this.projection = await scope.sessionProjections.register(dvlLearningProjection)
         })
 
-        // 这个是
+        // 创作子代理首次开步前，把归属写进它自己的日志，使其冷恢复时不必依赖父会话仍然在线
+        ctx.on('agent/pre-step', async ({agent}, next) => {
+            if (agent.session.header.origin !== 'subagent' || this.getCurrentSessionDvlLearningState(agent).delegatedFrom !== null) return next()
+
+            const root = this.learningRootOf(agent)
+            if (root !== null) {
+                recordLearningDelegateToSession(agent.session, String(root.id))
+                ctx.logger.info(`创作子代理 ${String(agent.id)} 已归属学习会话 ${String(root.id)}`)
+            }
+            return next()
+        })
+
+        // 每轮把学习快照注入根学习会话
         ctx.on('system-prompt/assemble', async (assembly, context, next) => {
             const result = await next()
             const agent = context.agent
 
-            // 无agent或者未进入或放弃，则early ret
-            if (agent === undefined || !this.getCurrentSessionDvlLearningState(agent).entered || context.signal?.aborted === true) return result
+            // 无agent或非根学习会话或放弃，则early ret
+            if (agent === undefined || this.audienceOf(agent) !== 'root' || context.signal?.aborted === true) return result
 
             const state = this.getCurrentSessionDvlLearningState(agent)
             const cwd = this.getCurrentSessionCwd(agent)
@@ -144,7 +191,24 @@ export class LearningService extends Service {
     // ---实用会话状态取得---
 
     getCurrentSessionDvlLearningState(agent: Agent): SessionDvlLearningState {
-        return this.ctx.get('sessionProjections')?.snapshot(agent.session).values.dvlLearning ?? {entered: false, activeOutlineId: null}
+        return this.projection?.stateOf(agent.session) ?? EMPTY_STATE
+    }
+
+    // 判定会话角色。子代理（含 fork 出来、继承了进入记录的）一律不算根学习会话
+    audienceOf(agent: Agent): LearningAudience {
+        const state = this.getCurrentSessionDvlLearningState(agent)
+
+        if (agent.session.header.origin !== 'subagent') return state.entered ? 'root' : 'none'
+        return state.delegatedFrom !== null || this.learningRootOf(agent) !== null ? 'author' : 'none'
+    }
+
+    // 子代理的直接父会话若是在线的根学习会话，则返回它
+    private learningRootOf(agent: Agent): Agent | null {
+        const parentId = agent.session.header.parentSession
+        const parent = parentId === undefined ? undefined : this.ctx.get('agents')?.get(parentId)
+        if (parent === undefined || parent.session.header.origin === 'subagent') return null
+
+        return this.getCurrentSessionDvlLearningState(parent).entered ? parent : null
     }
 
     getCurrentSessionCwd(agent: Agent): string | null {
@@ -162,10 +226,33 @@ export class LearningService extends Service {
         this.publishWorkspace(cwd)
 
         recordLearningEnteredToSession(agent.session)
-        this.ensureLearningToolsMounted(agent)
+        this.ctx.logger.info(`会话 ${String(agent.id)} 进入氛围学习`)
 
-        agent.steer(noticeMessage(bootMsg))
+        agent.steer(noticeMessage('已进入氛围学习', bootMsg))
         return true
+    }
+
+    // 学习面板发起的意图投递：目标会话须在线；新建的会话会继承发起方会话的模型并先进入学习
+    async deliverPanelIntent(sessionId: string, sourceSessionId: string, summary: string, instruction: string): Promise<void> {
+        const agents = this.ctx.get('agents')
+        if (sessionId.length === 0) throw new Error('必须指定目标会话')
+
+        // 刚新建或刚由前端打开的会话可能还在恢复中，稍等它上线
+        let agent = agents?.get(brandSessionId(sessionId))
+        for (let waited = 0; agent === undefined && waited < LIVE_AGENT_WAIT_MS; waited += 100) {
+            await new Promise(resolve => setTimeout(resolve, 100))
+            agent = agents?.get(brandSessionId(sessionId))
+        }
+        if (agent === undefined) throw new Error(`目标会话不在线：${sessionId}`)
+
+        const source = sourceSessionId.length === 0 || sourceSessionId === sessionId ? undefined : agents?.get(brandSessionId(sourceSessionId))
+        const inherited = source?.model.current()
+        if (inherited !== undefined && agent.model.current() === undefined) agent.model.select(inherited)
+
+        if (this.getCurrentSessionDvlLearningState(agent).entered) this.notify(agent, summary, instruction)
+        else await this.enterVibeLearning(agent, instruction)
+
+        this.ctx.logger.info(`学习面板向会话 ${sessionId} 投递意图：${summary}`)
     }
 
     async changeCurrentSessionOutline(agent: Agent, outlineId: string | null): Promise<void> {
@@ -176,10 +263,11 @@ export class LearningService extends Service {
             if (await this.outlinesFor(cwd).read(outlineId) === null) throw new Error(`纲目不存在：${outlineId}`)
         }
         recordLearningOutlineChangeToSession(agent.session, outlineId)
+        this.ctx.logger.info(`会话 ${String(agent.id)} 的激活纲目切换为 ${outlineId ?? '无'}`)
     }
 
-    notify(agent: Agent, text: string): void {
-        agent.steer(noticeMessage(text))
+    notify(agent: Agent, summary: string, text: string): void {
+        agent.steer(noticeMessage(summary, text))
     }
 
     // ---这几个和Outline等有关，但又涉及工作区操刀。部分加了“总联动”所以目前放在本core而不是都下沉入领域类---
@@ -197,17 +285,17 @@ export class LearningService extends Service {
     }
 
     async saveOutline(cwd: string, outline: Outline): Promise<void> {
-        for (const hash of outlineArtifactHashes(outline)) if (!await this.artifactsFor(cwd).exists('lesson', hash)) throw new Error(`大纲引用的课程工件不存在：${hash}`)
+        for (const artifactId of outlineArtifactIds(outline)) if (!await this.artifactsFor(cwd).exists('lesson', artifactId)) throw new Error(`大纲引用的课程工件不存在：${artifactId}`)
 
         await this.outlinesFor(cwd).write(outline)
 
         this.publishLearning(cwd)
     }
 
-    async updateOutlineArtifactBinding(cwd: string, outlineId: string, lessonId: string, artifactHash: string | null): Promise<Outline> {
-        if (artifactHash !== null && !await this.artifactsFor(cwd).exists('lesson', artifactHash)) throw new Error(`课程工件不存在：${artifactHash}`)
+    async updateOutlineArtifactBinding(cwd: string, outlineId: string, lessonId: string, artifactId: string | null): Promise<Outline> {
+        if (artifactId !== null && !await this.artifactsFor(cwd).exists('lesson', artifactId)) throw new Error(`课程工件不存在：${artifactId}`)
 
-        const outline = await this.outlinesFor(cwd).updateArtifactBinding(outlineId, lessonId, artifactHash)
+        const outline = await this.outlinesFor(cwd).updateArtifactBinding(outlineId, lessonId, artifactId)
 
         this.publishLearning(cwd)
 
@@ -222,53 +310,53 @@ export class LearningService extends Service {
         // 收集连带情况
 
         const remainingOutlines = (await this.listOutlines(cwd)).filter(outline => outline.id !== id)
-        const retainedLessons = new Set(remainingOutlines.flatMap(outline => outlineArtifactHashes(outline)))
+        const retainedLessons = new Set(remainingOutlines.flatMap(outline => outlineArtifactIds(outline)))
 
         const removedPlans = (await this.reviewPlansFor(cwd).list()).filter(plan => plan.outlineId === id)
         const retainedPlans = (await this.reviewPlansFor(cwd).list()).filter(plan => plan.outlineId !== id)
 
-        const retainedReviews = new Set(retainedPlans.flatMap(plan => plan.rounds.flatMap(round => round.artifactHash === undefined ? [] : [round.artifactHash])))
-        const temporaryReviews = new Set((await this.reviewPlansFor(cwd).temporaryManifest()).rounds.flatMap(round => round.artifactHash === undefined ? [] : [round.artifactHash]))
+        const retainedReviews = new Set(retainedPlans.flatMap(plan => plan.rounds.flatMap(round => round.artifactId === undefined ? [] : [round.artifactId])))
+        const temporaryReviews = new Set((await this.reviewPlansFor(cwd).temporaryManifest()).rounds.flatMap(round => round.artifactId === undefined ? [] : [round.artifactId]))
 
         // 盘算删除
 
-        const lessonDeletions = outlineArtifactHashes(target).filter(hash => !retainedLessons.has(hash))
-        const reviewDeletions = removedPlans.flatMap(plan => plan.rounds.flatMap(round => round.artifactHash === undefined ? [] : [round.artifactHash])).filter(hash => !retainedReviews.has(hash) && !temporaryReviews.has(hash))
+        const lessonDeletions = outlineArtifactIds(target).filter(artifactId => !retainedLessons.has(artifactId))
+        const reviewDeletions = removedPlans.flatMap(plan => plan.rounds.flatMap(round => round.artifactId === undefined ? [] : [round.artifactId])).filter(artifactId => !retainedReviews.has(artifactId) && !temporaryReviews.has(artifactId))
 
-        for (const hash of lessonDeletions) await this.confirmArtifactHasNoActiveRun(cwd, 'lesson', hash)
-        for (const hash of reviewDeletions) await this.confirmArtifactHasNoActiveRun(cwd, 'review', hash)
+        for (const artifactId of lessonDeletions) await this.confirmArtifactHasNoActiveRun(cwd, 'lesson', artifactId)
+        for (const artifactId of reviewDeletions) await this.confirmArtifactHasNoActiveRun(cwd, 'review', artifactId)
 
         // 真正删除
 
         await this.outlinesFor(cwd).delete(id)
         for (const plan of removedPlans) await this.reviewPlansFor(cwd).delete(plan.id)
-        for (const hash of lessonDeletions) await this.artifactsFor(cwd).delete('lesson', hash)
-        for (const hash of reviewDeletions) await this.artifactsFor(cwd).delete('review', hash)
+        for (const artifactId of lessonDeletions) await this.artifactsFor(cwd).delete('lesson', artifactId)
+        for (const artifactId of reviewDeletions) await this.artifactsFor(cwd).delete('review', artifactId)
 
         this.publishLearning(cwd)
     }
 
-    async deleteArtifact(cwd: string, kind: ArtifactKind, hash: string): Promise<void> {
+    async deleteArtifact(cwd: string, kind: ArtifactKind, artifactId: string): Promise<void> {
         // 校验
 
-        if (!await this.artifactsFor(cwd).exists(kind, hash)) throw new Error(`工件不存在：${kind}/${hash}`)
+        if (!await this.artifactsFor(cwd).exists(kind, artifactId)) throw new Error(`工件不存在：${kind}/${artifactId}`)
 
         if (kind === 'lesson') {
-            const referenced = (await this.listOutlines(cwd)).some(outline => outlineArtifactHashes(outline).includes(hash))
+            const referenced = (await this.listOutlines(cwd)).some(outline => outlineArtifactIds(outline).includes(artifactId))
             if (referenced) throw new Error('仍被大纲课程引用的工件不能删除')
         }
 
         if (kind === 'review') {
-            const planned = (await this.reviewPlansFor(cwd).list()).some(plan => plan.rounds.some(round => round.artifactHash === hash))
+            const planned = (await this.reviewPlansFor(cwd).list()).some(plan => plan.rounds.some(round => round.artifactId === artifactId))
             if (planned) throw new Error('仍被复习计划引用的工件不能删除')
         }
 
-        await this.confirmArtifactHasNoActiveRun(cwd, kind, hash)
+        await this.confirmArtifactHasNoActiveRun(cwd, kind, artifactId)
 
         // 删除
 
-        if (kind === 'review') await this.reviewPlansFor(cwd).removeTemporaryRoundsForArtifact(hash)
-        await this.artifactsFor(cwd).delete(kind, hash)
+        if (kind === 'review') await this.reviewPlansFor(cwd).removeTemporaryRoundsForArtifact(artifactId)
+        await this.artifactsFor(cwd).delete(kind, artifactId)
 
         this.publishLearning(cwd)
     }
@@ -302,18 +390,18 @@ export class LearningService extends Service {
 
         // 收集和盘算
 
-        const hashes = [...new Set(plan.rounds.flatMap(round => round.artifactHash === undefined ? [] : [round.artifactHash]))]
-        const otherReferences = new Set((await this.reviewPlansFor(cwd).list()).filter(other => other.id !== id).flatMap(other => other.rounds.flatMap(round => round.artifactHash === undefined ? [] : [round.artifactHash])))
-        const temporary = new Set((await this.reviewPlansFor(cwd).temporaryManifest()).rounds.flatMap(round => round.artifactHash === undefined ? [] : [round.artifactHash]))
-        const deletions = hashes.filter(hash => !otherReferences.has(hash) && !temporary.has(hash))
+        const artifactIds = [...new Set(plan.rounds.flatMap(round => round.artifactId === undefined ? [] : [round.artifactId]))]
+        const otherReferences = new Set((await this.reviewPlansFor(cwd).list()).filter(other => other.id !== id).flatMap(other => other.rounds.flatMap(round => round.artifactId === undefined ? [] : [round.artifactId])))
+        const temporary = new Set((await this.reviewPlansFor(cwd).temporaryManifest()).rounds.flatMap(round => round.artifactId === undefined ? [] : [round.artifactId]))
+        const deletions = artifactIds.filter(artifactId => !otherReferences.has(artifactId) && !temporary.has(artifactId))
 
-        if (!preserveArtifacts) for (const hash of deletions) await this.confirmArtifactHasNoActiveRun(cwd, 'review', hash)
-        if (preserveArtifacts) for (const round of plan.rounds) if (round.artifactHash !== undefined && !otherReferences.has(round.artifactHash) && !temporary.has(round.artifactHash)) await this.reviewPlansFor(cwd).preserveArtifactAsTemporary(plan.outlineId, plan.lessonId, round.artifactHash)
+        if (!preserveArtifacts) for (const artifactId of deletions) await this.confirmArtifactHasNoActiveRun(cwd, 'review', artifactId)
+        if (preserveArtifacts) for (const round of plan.rounds) if (round.artifactId !== undefined && !otherReferences.has(round.artifactId) && !temporary.has(round.artifactId)) await this.reviewPlansFor(cwd).preserveArtifactAsTemporary(plan.outlineId, plan.lessonId, round.artifactId)
 
         // 真正删除
 
         await this.reviewPlansFor(cwd).delete(id)
-        if (!preserveArtifacts) for (const hash of deletions) await this.artifactsFor(cwd).delete('review', hash)
+        if (!preserveArtifacts) for (const artifactId of deletions) await this.artifactsFor(cwd).delete('review', artifactId)
 
         this.publishLearning(cwd)
     }
@@ -328,20 +416,20 @@ export class LearningService extends Service {
         return claimed
     }
 
-    async updateReviewPlanRoundArtifactBinding(cwd: string, planId: string, roundId: string, artifactHash: ArtifactHash): Promise<ReviewPlan> {
-        await this.confirmReviewArtifact(cwd, artifactHash)
+    async updateReviewPlanRoundArtifactBinding(cwd: string, planId: string, roundId: string, artifactId: ArtifactId): Promise<ReviewPlan> {
+        await this.confirmReviewArtifact(cwd, artifactId)
 
-        const plan = await this.reviewPlansFor(cwd).updateRoundArtifactBinding(planId, roundId, artifactHash)
+        const plan = await this.reviewPlansFor(cwd).updateRoundArtifactBinding(planId, roundId, artifactId)
 
         this.publishLearning(cwd)
 
         return plan
     }
 
-    async updateTemporaryReviewPlanRoundArtifactBinding(cwd: string, roundId: string, artifactHash: ArtifactHash): Promise<TemporaryReviewPlanRoundManifest> {
-        await this.confirmReviewArtifact(cwd, artifactHash)
+    async updateTemporaryReviewPlanRoundArtifactBinding(cwd: string, roundId: string, artifactId: ArtifactId): Promise<TemporaryReviewPlanRoundManifest> {
+        await this.confirmReviewArtifact(cwd, artifactId)
 
-        const manifest = await this.reviewPlansFor(cwd).updateTemporaryRoundArtifactBinding(roundId, artifactHash)
+        const manifest = await this.reviewPlansFor(cwd).updateTemporaryRoundArtifactBinding(roundId, artifactId)
 
         this.publishLearning(cwd)
 
@@ -363,9 +451,9 @@ export class LearningService extends Service {
     async adoptTemporaryReviewPlanRound(cwd: string, temporaryRoundId: string, planId: string): Promise<ReviewPlan> {
         const manifest = await this.reviewPlansFor(cwd).temporaryManifest()
         const temporary = manifest.rounds.find(round => round.id === temporaryRoundId)
-        if (temporary === undefined || temporary.artifactHash === undefined) throw new Error('临时复习期次不存在或尚未绑定工件')
+        if (temporary === undefined || temporary.artifactId === undefined) throw new Error('临时复习期次不存在或尚未绑定工件')
 
-        await this.confirmCompletedReviewedArtifact(cwd, temporary.artifactHash)
+        await this.confirmCompletedReviewedArtifact(cwd, temporary.artifactId)
 
         const adopted = await this.reviewPlansFor(cwd).adoptTemporaryRound(temporaryRoundId, planId)
 
@@ -380,9 +468,9 @@ export class LearningService extends Service {
         if (plan === null) throw new Error(`复习计划不存在：${planId}`)
 
         const active = plan.rounds.filter(round => round.state === 'active')
-        if (active.length !== 1 || active[0]?.artifactHash === undefined) throw new Error('复习计划的活跃期次尚未绑定复习工件')
+        if (active.length !== 1 || active[0]?.artifactId === undefined) throw new Error('复习计划的活跃期次尚未绑定复习工件')
 
-        await this.confirmCompletedReviewedArtifact(cwd, active[0].artifactHash)
+        await this.confirmCompletedReviewedArtifact(cwd, active[0].artifactId)
         const updated = await this.reviewPlansFor(cwd).complete(planId, rating)
 
         this.publishLearning(cwd)
@@ -391,26 +479,26 @@ export class LearningService extends Service {
     }
 
     // 确定存在复习工件
-    private async confirmReviewArtifact(cwd: string, artifactHash: ArtifactHash): Promise<void> {
-        if (!isValidArtifactHash(artifactHash)) throw new Error(`复习工件哈希无效：${artifactHash}`)
-        if (!await this.artifactsFor(cwd).exists('review', artifactHash)) throw new Error(`复习工件不存在：${artifactHash}`)
+    private async confirmReviewArtifact(cwd: string, artifactId: ArtifactId): Promise<void> {
+        if (!isValidArtifactId(artifactId)) throw new Error(`复习工件哈希无效：${artifactId}`)
+        if (!await this.artifactsFor(cwd).exists('review', artifactId)) throw new Error(`复习工件不存在：${artifactId}`)
     }
 
     // 确定复习工件已完成（完成批改了）
-    private async confirmCompletedReviewedArtifact(cwd: string, artifactHash: ArtifactHash): Promise<void> {
-        await this.confirmReviewArtifact(cwd, artifactHash)
-        const runs = await this.runs.list('review', artifactHash, cwd)
+    private async confirmCompletedReviewedArtifact(cwd: string, artifactId: ArtifactId): Promise<void> {
+        await this.confirmReviewArtifact(cwd, artifactId)
+        const runs = await this.runs.list('review', artifactId, cwd)
 
         for (const run of runs) if (run.state === 'completed' && run.hasFeedback) return
 
-        throw new Error(`复习工件尚无已完成且已批改的 Run：${artifactHash}`)
+        throw new Error(`复习工件尚无已完成且已批改的 Run：${artifactId}`)
     }
 
     // ---和RUN有关系---
 
     // 无则开，有则续
-    async obtainDirectRun(cwd: string, kind: ArtifactKind, hash: string): Promise<RunRef> {
-        const run = await this.runs.obtain({cwd, kind, hash})
+    async obtainDirectRun(cwd: string, kind: ArtifactKind, artifactId: string): Promise<RunRef> {
+        const run = await this.runs.obtain({cwd, kind, artifactId})
 
         this.publishLearning(cwd)
 
@@ -420,6 +508,7 @@ export class LearningService extends Service {
     // 把Outcome写啊一个个
     async finishRun(ref: RunRef, outcome: RunOutcome): Promise<{outcome: RunOutcome; alreadyFinished: boolean}> {
         const finished = await this.runs.finish(ref, outcome)
+        if (!finished.alreadyFinished) this.ctx.logger.info(`Run ${ref.runId}（${ref.kind}/${ref.artifactId}）终结为 ${finished.outcome.state}`)
 
         this.publishLearning(ref.cwd)
 
@@ -448,6 +537,7 @@ export class LearningService extends Service {
             const descriptor = await this.describeRun(run)
             this.inBandPresentations.attach(callId, run)
 
+            this.ctx.logger.info(`会话 ${String(agent.id)} 开始呈现 ${kind}/${run.artifactId}，Run ${run.runId}`)
             this.publishLearning(cwd)
 
             try {
@@ -459,6 +549,7 @@ export class LearningService extends Service {
 
                 return {outcome: presentOutcomeOf(run.runId, waited), descriptor}
             } finally {
+                this.ctx.logger.info(`会话 ${String(agent.id)} 结束呈现 Run ${run.runId}`)
                 this.inBandPresentations.release(callId)
 
                 reserved = false
@@ -468,6 +559,7 @@ export class LearningService extends Service {
         } catch (error: unknown) {
             if (reserved) this.inBandPresentations.release(callId)
 
+            this.ctx.logger.warn(`会话 ${String(agent.id)} 呈现工件失败：${errorText(error)}`)
             return {outcome: {outcome: 'error', detail: errorText(error)}}
         }
     }
@@ -481,34 +573,55 @@ export class LearningService extends Service {
     }
 
     async describeRun(run: RunRef): Promise<ArtifactRunDescriptor> {
-        return {version: 2, workspaceId: generateWorkspaceHashIdOf(run.cwd), kind: run.kind, hash: run.hash, title: await this.artifactsFor(run.cwd).title(run.kind, run.hash), runId: run.runId, url: this.getRunUrl(run.cwd, run.kind, run.hash, run.runId)}
+        return {version: 2, workspaceId: generateWorkspaceHashIdOf(run.cwd), kind: run.kind, artifactId: run.artifactId, title: await this.artifactsFor(run.cwd).title(run.kind, run.artifactId), runId: run.runId, url: this.getRunUrl(run.cwd, run.kind, run.artifactId, run.runId)}
     }
 
     // ---工件这一块---
 
     async listArtifacts(cwd: string, kind: ArtifactKind): Promise<ArtifactSummary[]> {
-        const artifacts = await this.artifactsFor(cwd).list(kind, (artifactKind, hash) => this.runs.list(artifactKind, hash, cwd))
+        const artifacts = await this.artifactsFor(cwd).list(kind, (artifactKind, artifactId) => this.runs.list(artifactKind, artifactId, cwd))
 
-        return artifacts.map(artifact => ({...artifact, runs: artifact.runs.map(run => {
-            const lease = this.inBandPresentations.forRun({cwd, kind, hash: artifact.hash, runId: run.runId})
+        return artifacts.map(artifact => ({...artifact, previewUrl: this.getArtifactUrl(cwd, kind, artifact.artifactId), runs: artifact.runs.map(run => {
+            const lease = this.inBandPresentations.forRun({cwd, kind, artifactId: artifact.artifactId, runId: run.runId})
             return lease === null ? run : {...run, inBandSessionId: lease.sessionId}
         })}))
     }
 
-    private async confirmArtifactHasNoActiveRun(cwd: string, kind: ArtifactKind, hash: string): Promise<void> {
-        const active = (await this.runs.list(kind, hash, cwd)).some(run => run.state === 'active')
+    private async confirmArtifactHasNoActiveRun(cwd: string, kind: ArtifactKind, artifactId: string): Promise<void> {
+        const active = (await this.runs.list(kind, artifactId, cwd)).some(run => run.state === 'active')
 
         if (active) throw new Error('工件仍有进行中的 Run，不能删除')
     }
 
-    getArtifactUrl(cwd: string, kind: ArtifactKind, hash: string): string {
-        recordWorkspaceHashIdByGeneratingItFromItsCwd(cwd)
-        return `${this.getOriginBase()}${DVL_SERVER_ROUTE_PREFIX}/${generateWorkspaceHashIdOf(cwd)}/${ARTIFACT_CATEGORY_BY_KIND[kind]}/${hash}/index.html`
+    // 分配一个新工件身份，供模型随后用官方 write/edit 工具写入
+    async allocateArtifact(cwd: string, kind: ArtifactKind): Promise<{artifactId: ArtifactId; path: string}> {
+        await this.filesFor(cwd).createLearningWorkspace()
+        return this.artifactsFor(cwd).allocate(kind)
     }
 
-    getRunUrl(cwd: string, kind: ArtifactKind, hash: string, runId: string): string {
+    // ---URL：一律为同源相对路径，由前端按当前页面 origin 解析---
+
+    // 只读预览 URL 带本进程签发的凭证，工件页面不依赖 Dsh 的 cookie 鉴权
+    getArtifactUrl(cwd: string, kind: ArtifactKind, artifactId: string): string {
         recordWorkspaceHashIdByGeneratingItFromItsCwd(cwd)
-        return `${this.getOriginBase()}${DVL_SERVER_ROUTE_PREFIX}/${generateWorkspaceHashIdOf(cwd)}/${ARTIFACT_CATEGORY_BY_KIND[kind]}/${hash}/runs/${runId}/index.html`
+        const workspaceId = generateWorkspaceHashIdOf(cwd)
+        return `${DVL_SERVER_ROUTE_PREFIX}/${workspaceId}/${ARTIFACT_CATEGORY_BY_KIND[kind]}/${artifactId}/index.html?k=${this.previewKeyOf(workspaceId, kind, artifactId)}`
+    }
+
+    // Run 页面以不可猜的 runId 本身作为凭证
+    getRunUrl(cwd: string, kind: ArtifactKind, artifactId: string, runId: string): string {
+        recordWorkspaceHashIdByGeneratingItFromItsCwd(cwd)
+        return `${DVL_SERVER_ROUTE_PREFIX}/${generateWorkspaceHashIdOf(cwd)}/${ARTIFACT_CATEGORY_BY_KIND[kind]}/${artifactId}/runs/${runId}/index.html`
+    }
+
+    previewKeyOf(workspaceId: string, kind: ArtifactKind, artifactId: string): string {
+        return createHmac('sha256', this.previewSecret).update(`${workspaceId}/${kind}/${artifactId}`).digest('hex').slice(0, 32)
+    }
+
+    verifyPreviewKey(workspaceId: string, kind: ArtifactKind, artifactId: string, key: string): boolean {
+        const expected = Buffer.from(this.previewKeyOf(workspaceId, kind, artifactId))
+        const actual = Buffer.from(key)
+        return actual.length === expected.length && timingSafeEqual(actual, expected)
     }
 
     // ---剩余金典会话内容---
@@ -563,21 +676,6 @@ export class LearningService extends Service {
         } catch (error: unknown) {
             return {workspaceId: generateWorkspaceHashIdOf(cwd), learningDirExists: true, activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: errorText(error)}
         }
-    }
-
-    private ensureLearningToolsMounted(agent: Agent): void {
-        if (!this.learningToolsEnabledAgents.has(agent)) {
-            agent.ctx.effect(() => installLearningTools(this.ctx, this, agent), CORDIS_EFFECT_AGENT_TOOLS)
-            this.learningToolsEnabledAgents.add(agent)
-        }
-    }
-
-    private getOriginBase(): string {
-        const webServer = this.ctx.get('webServer')
-        if (webServer === undefined) throw new Error('DSH webServer 未就绪，无法构造工件 URL')
-
-        // noinspection HttpUrlsUsage
-        return `http://${webServer.host}:${webServer.port}`
     }
 
     // ---通知前端---

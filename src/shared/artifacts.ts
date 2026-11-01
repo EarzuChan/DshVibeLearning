@@ -6,11 +6,11 @@ export type ArtifactKind = keyof typeof ARTIFACT_CATEGORY_BY_KIND
 
 export type ArtifactCategory = typeof ARTIFACT_CATEGORY_BY_KIND[ArtifactKind]
 
-export type ArtifactHash = string
+export type ArtifactId = string
 
 export interface ArtifactTarget {
   readonly kind: ArtifactKind
-  readonly hash: ArtifactHash
+  readonly artifactId: ArtifactId
 }
 
 export function artifactKindOf(category: string | undefined): ArtifactKind | null {

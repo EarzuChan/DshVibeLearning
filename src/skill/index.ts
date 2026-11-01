@@ -23,8 +23,15 @@ anyJsonValue 是任意 JSON 值（对象/数组/原始值/null 均可），DVL �
 - 带足上下文，使模型脱离 lesson 也能独立判阅；
 - **不要**输出最终分数、总分或任何评分字段。
 
-## 存放
-按系统 prompt 给定的路径约定，将 index.html 写入工作区 learning 目录的对应分类，随后由模型 present。`
+## 运行环境
+工件在沙箱化的不透明源中运行：localStorage、sessionStorage、cookie 与 IndexedDB 均不可用（访问会抛错），不得依赖它们保存进度；需要的状态放在页面内存里。
+提交桥 window.DVL 只在 Run 页面中存在；只读预览中不存在，调用前先判断。
+
+## 落盘
+1. 调用 allocate_artifact(kind) 取得 artifact_id 与 path，不要自己编造 ID 或计算哈希。
+2. 用通用的文件写入工具把完整 HTML 一次写到该 path。
+3. 之后需要修改时，用文件编辑工具就地改该 index.html；artifact_id 不变，已开始的 Run 不受影响。
+4. 由学习会话的主代理绑定并 present；若你是创作子代理，在最终回复里报告 artifact_id。`
 
 // 将课程工件创作 skill 注册到运行时 registry，正文直接内联，不使用目录
 export function installCourseAuthoringSkill(ctx: Context): void {

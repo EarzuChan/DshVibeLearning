@@ -3,14 +3,14 @@
 import {randomUUID} from 'node:crypto'
 import {link, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile} from 'node:fs/promises'
 import {dirname, join, resolve, sep} from 'node:path'
-import type {ArtifactHash, ArtifactKind, ArtifactTarget} from '../shared/artifacts.ts'
+import type {ArtifactId, ArtifactKind, ArtifactTarget} from '../shared/artifacts.ts'
 import {ARTIFACT_CATEGORY_BY_KIND} from '../shared/artifacts.ts'
 import {isSafeSegment} from '../util/identifiers.ts'
 
 // ---实用常量---
 
 export const LEARNING_DIR = '.dsh/learning'
-export const LEARNING_ARTIFACT_PATH_PATTERN = `${LEARNING_DIR}/artifacts/<lessons|reviews|quizzes>/<hash>/index.html`
+export const LEARNING_ARTIFACT_PATH_PATTERN = `${LEARNING_DIR}/artifacts/<lessons|reviews|quizzes>/<artifact-id>/index.html`
 
 // ---文件实用方法---
 
@@ -18,8 +18,9 @@ export function isEnoent(error: unknown): boolean {
     return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
 }
 
-export function isValidArtifactHash(hash: string): hash is ArtifactHash {
-    return /^[a-f0-9]{6,64}$/iu.test(hash)
+// 工件 ID 由 allocate_artifact 随机分配：16 位小写 hex，与内容无关，因此工件可被就地编辑
+export function isValidArtifactId(artifactId: string): artifactId is ArtifactId {
+    return /^[a-f0-9]{16}$/u.test(artifactId)
 }
 
 export function isValidRunId(runId: string): boolean {
@@ -134,30 +135,40 @@ export class LearningFiles {
         return join(this.root, 'artifacts', ARTIFACT_CATEGORY_BY_KIND[kind])
     }
 
-    artifactDir(kind: ArtifactKind, hash: ArtifactHash): string {
-        if (!isValidArtifactHash(hash)) throw new Error(`不安全的工件哈希：${hash}`)
-        return join(this.artifactCategoryDir(kind), hash)
+    artifactDir(kind: ArtifactKind, artifactId: ArtifactId): string {
+        if (!isValidArtifactId(artifactId)) throw new Error(`不合法的工件 ID：${artifactId}`)
+        return join(this.artifactCategoryDir(kind), artifactId)
     }
 
-    artifactHtml(kind: ArtifactKind, hash: ArtifactHash): string {
-        return join(this.artifactDir(kind, hash), 'index.html')
+    artifactHtml(kind: ArtifactKind, artifactId: ArtifactId): string {
+        return join(this.artifactDir(kind, artifactId), 'index.html')
     }
 
-    runsDir(kind: ArtifactKind, hash: ArtifactHash): string {
-        return join(this.artifactDir(kind, hash), 'runs')
+    runsDir(kind: ArtifactKind, artifactId: ArtifactId): string {
+        return join(this.artifactDir(kind, artifactId), 'runs')
     }
 
-    runDir(kind: ArtifactKind, hash: ArtifactHash, runId: string): string {
+    runDir(kind: ArtifactKind, artifactId: ArtifactId, runId: string): string {
         if (!isValidRunId(runId)) throw new Error(`不安全的 Run ID：${runId}`)
-        return join(this.runsDir(kind, hash), runId)
+        return join(this.runsDir(kind, artifactId), runId)
     }
 
-    outcomeFile(kind: ArtifactKind, hash: ArtifactHash, runId: string): string {
-        return join(this.runDir(kind, hash, runId), 'outcome.json')
+    // Run 创建时冻结的工件副本：之后编辑工件不影响进行中或历史的 Run
+    runArtifactHtml(kind: ArtifactKind, artifactId: ArtifactId, runId: string): string {
+        return join(this.runDir(kind, artifactId, runId), 'index.html')
     }
 
-    feedbackFile(kind: ArtifactKind, hash: ArtifactHash, runId: string): string {
-        return join(this.runDir(kind, hash, runId), 'feedback.json')
+    // Run 所属进程的标记，用于判定跨进程失效
+    runBootFile(kind: ArtifactKind, artifactId: ArtifactId, runId: string): string {
+        return join(this.runDir(kind, artifactId, runId), 'boot.json')
+    }
+
+    outcomeFile(kind: ArtifactKind, artifactId: ArtifactId, runId: string): string {
+        return join(this.runDir(kind, artifactId, runId), 'outcome.json')
+    }
+
+    feedbackFile(kind: ArtifactKind, artifactId: ArtifactId, runId: string): string {
+        return join(this.runDir(kind, artifactId, runId), 'feedback.json')
     }
 
     // ---实际方法---
@@ -182,9 +193,9 @@ export class LearningFiles {
         if (absolute === category || !absolute.startsWith(category + sep)) throw new Error(`工件路径必须位于目录下：${category}`)
 
         const rest = absolute.slice(category.length + 1)
-        const [hash, ...tail] = rest.split(sep)
-        if (hash === undefined || tail.join(sep) !== 'index.html' || !isValidArtifactHash(hash)) throw new Error(`工件路径必须符合格式：<learning>/artifacts/${ARTIFACT_CATEGORY_BY_KIND[kind]}/<hash>/index.html`)
+        const [artifactId, ...tail] = rest.split(sep)
+        if (artifactId === undefined || tail.join(sep) !== 'index.html' || !isValidArtifactId(artifactId)) throw new Error(`工件路径必须符合格式：<learning>/artifacts/${ARTIFACT_CATEGORY_BY_KIND[kind]}/<artifact-id>/index.html`)
 
-        return {kind, hash}
+        return {kind, artifactId}
     }
 }

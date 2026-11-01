@@ -1,8 +1,10 @@
 // DVL 浏览器端 slot 契约：定义学习入口与两张浮动卡片注入的业务接口，组件只通过 store 与回调访问业务数据
 
 import type {PropsRuntime, PropsStore, InjectFace, PropsLocale, HostObservable} from '@deepseek-ai/dsh-client-ui-slots'
-import type {SessionId} from '@deepseek-ai/dsh-client-runtime/client'
+import type {SessionId} from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于引入 ui-conversation 的 SlotMap 类型合并
+import type {} from '@deepseek-ai/dsh-client-ui-chat/client' // 仅用于引入 conversation.view 的 SlotMap 类型合并
+import type {} from '@deepseek-ai/dsh-client-ui-session/client' // 仅用于引入会话标准 props（sessionId、useProjection 等）的类型合并
 import type {ToolCallViewProps} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
 import type {ArtifactRunDescriptor, InbandPresentResult, PendingInteractionDto} from '../shared/api.ts'
@@ -27,15 +29,15 @@ export interface NotesActions {
 // 注入学习视图的 API
 export interface LearningApi {
   refresh: () => Promise<void> // 重新获取学习状态并写入共享 store，失败时抛错
-  createDirectRun: (category: ArtifactCategory, hash: string) => Promise<ArtifactRunDescriptor>
-  abortRun: (category: ArtifactCategory, hash: string, runId: string) => Promise<void>
-  inbandPresentExisting: (category: ArtifactCategory, hash: string, sessionId: string, runId?: string) => Promise<InbandPresentResult>
+  createDirectRun: (category: ArtifactCategory, artifactId: string) => Promise<ArtifactRunDescriptor>
+  abortRun: (category: ArtifactCategory, artifactId: string, runId: string) => Promise<void>
+  inbandPresentExisting: (category: ArtifactCategory, artifactId: string, sessionId: string, runId?: string) => Promise<InbandPresentResult>
   startDueReview: (planId: string, sessionId: string) => Promise<InbandPresentResult>
   deleteOutline: (id: string) => Promise<void>
   deleteReviewPlan: (id: string, preserveArtifacts: boolean) => Promise<void>
-  deleteArtifact: (category: ArtifactCategory, hash: string) => Promise<void>
-  openRun: (category: ArtifactCategory, hash: string, runId: string) => void
-  artifactUrl: (category: ArtifactCategory, hash: string) => string // 获取禁用提交的工件只读预览 URL
+  deleteArtifact: (category: ArtifactCategory, artifactId: string) => Promise<void>
+  openRun: (category: ArtifactCategory, artifactId: string, runId: string) => void
+  artifactUrl: (category: ArtifactCategory, artifactId: string) => string // 获取禁用提交的工件只读预览 URL
 }
 
 // 组件使用的共享 store 类型

@@ -1,190 +1,195 @@
-// FUCK：我很几把讨厌没用的测试，刻舟求剑。未来看看要不要删了
+// 冒烟：只覆盖不依赖 DSH 宿主就能验证、又最容易悄悄坏掉的关键契约。跑在 lib 构建产物上：pnpm build && pnpm smoke
 
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { runInNewContext } from 'node:vm'
-import { Context } from '@deepseek-ai/cordis'
-import WebServer from '@deepseek-ai/dsh-host-webserver'
+import assert from 'node:assert/strict'
+import {mkdtemp, readFile, writeFile} from 'node:fs/promises'
+import {createServer} from 'node:http'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {Context} from '@deepseek-ai/cordis'
 import LearningService from '../lib/core/index.js'
-import { renderSnapshot } from '../lib/core/prompt.js'
-import { installLearningRoutes } from '../lib/the-so-called-backend/index.js'
-import { generateWorkspaceHashIdOf, generateContentHash } from '../lib/util/identifiers.js'
+import {dvlLearningProjection} from '../lib/core/projection.js'
+import {renderSnapshot} from '../lib/core/prompt.js'
+import {installLearningRoutes} from '../lib/the-so-called-backend/index.js'
+import {recordWorkspaceHashIdByGeneratingItFromItsCwd} from '../lib/the-so-called-backend/workspace-hash-id-related.js'
+import {installLearningTools} from '../lib/tool/index.js'
+import {generateWorkspaceHashIdOf} from '../lib/util/identifiers.js'
+
+const results = []
+async function check(name, fn) {
+    try {
+        await fn()
+        results.push([name, true])
+    } catch (error) {
+        results.push([name, false])
+        console.error(`✗ ${name}\n`, error)
+    }
+}
 
 const ws = await mkdtemp(join(tmpdir(), 'dvl-ws-'))
 const ctx = new Context()
-ctx.provide('logger', { info: () => {}, warn: console.warn, error: console.error })
-const config = { dataDir: await mkdtemp(join(tmpdir(), 'dvl-data-')) }
-await ctx.plugin(LearningService, config)
-const service = ctx.learning
+await ctx.plugin(LearningService, {dataDir: await mkdtemp(join(tmpdir(), 'dvl-data-'))})
+const learning = ctx.learning
+assert.ok(learning !== undefined, '学习服务未能挂载')
 
-const activeSnapshot = renderSnapshot({
-  workspaceId: 'smoke', learningDirExists: true, activeOutlineId: 'math',
-  outlines: [{ id: 'math', title: '数学', phase: 'learning', dueReviewCount: 1 }, { id: 'english', title: '英语', phase: 'not-started', dueReviewCount: 1 }],
-  currentLesson: null, dueReviews: [{ planId: 'math-plan', lessonId: 'math-lesson', lessonTitle: '数学第一课', dueAt: '2026-01-01T00:00:00.000Z' }],
+// ---会话投影：插件记录的折叠---
+
+const record = (type, data) => ({type: `plugin:dsh-vibe-learning/${type}`, ignorable: true, seq: 0, time: 0, data})
+const fold = events => events.reduce((state, event) => dvlLearningProjection.apply(state, event), dvlLearningProjection.init())
+
+await check('投影：进入单向、纲目后写后得、子代理归属只认第一条', () => {
+    assert.deepEqual(fold([]), {entered: false, activeOutlineId: null, delegatedFrom: null})
+    assert.deepEqual(fold([record('enter', {}), record('change-outline', {outlineId: 'a'}), record('change-outline', {outlineId: null}), record('enter', {})]), {entered: true, activeOutlineId: null, delegatedFrom: null})
+    assert.equal(fold([record('delegate', {rootSessionId: 'r1'}), record('delegate', {rootSessionId: 'r2'})]).delegatedFrom, 'r1')
 })
-console.log('SNAPSHOT_ACTIVE_OUTLINE:', activeSnapshot.includes('数学第一课'), !activeSnapshot.includes('英语'))
 
-const inactiveSnapshot = renderSnapshot({
-  workspaceId: 'smoke', learningDirExists: true, activeOutlineId: null,
-  outlines: [{ id: 'math', title: '数学', phase: 'learning', dueReviewCount: 2 }, { id: 'english', title: '英语', phase: 'not-started', dueReviewCount: 1 }],
-  currentLesson: null, dueReviews: [],
+await check('投影：非 ignorable、非本插件或载荷无效的事件一律忽略', () => {
+    assert.equal(fold([{type: 'plugin:dsh-vibe-learning/enter', data: {}}]).entered, false)
+    assert.equal(fold([record('change-outline', {outlineId: 42})]).activeOutlineId, null)
+    assert.equal(fold([{type: 'feedback/record', ignorable: true, data: {text: 'x'}}]).entered, false)
 })
-console.log('SNAPSHOT_OUTLINE_COUNTS:', inactiveSnapshot.includes('数学（到期复习：2 项）'), inactiveSnapshot.includes('英语（到期复习：1 项）'))
-// 真 WebServer：port 0 让 OS 分配，验证 DVL 路由与 URL 构造对任意端口的适应性
-await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
-ctx.inject(['webServer', 'learning'], scope => installLearningRoutes(scope))
-await new Promise(r => setTimeout(r, 300))
-const PORT = ctx.webServer.port
 
-const files = service.filesFor(ws)
-await files.createLearningWorkspace()
-const html = '<html><head></head><body><h1>lesson</h1><button onclick="window.DVL.submit({q:[1,null,\"x\"]})">submit</button></body></html>'
-const hash = generateContentHash(html)
-const artifactPath = join(ws, '.dsh/learning/lessons', hash, 'index.html')
-await mkdir(join(ws, '.dsh/learning/lessons', hash), { recursive: true })
-await writeFile(artifactPath, html)
-service.registerWorkspace(ws)
+// ---快照文案---
+
+await check('快照：激活纲目只列本纲目的到期复习', () => {
+    const text = renderSnapshot({workspaceId: 'w', learningDirExists: true, activeOutlineId: 'math', outlines: [{id: 'math', title: '数学', phase: 'learning', dueReviewCount: 1}], currentLesson: null, dueReviews: [{planId: 'p', lessonId: 'l', lessonTitle: '数学第一课', dueAt: '2026-01-01T00:00:00.000Z'}]})
+    assert.ok(text.includes('激活大纲：数学（learning）'))
+    assert.ok(text.includes('数学第一课'))
+})
+
+// ---工件与 Run---
+
+const HTML_V1 = '<html><head></head><body><h1>第一版</h1></body></html>'
+const HTML_V2 = '<html><head></head><body><h1>第二版</h1></body></html>'
+
+const allocated = await learning.allocateArtifact(ws, 'lesson')
+const artifactId = allocated.artifactId
+await writeFile(allocated.path, HTML_V1)
+
+await check('工件：allocate 给出 16 位随机 hex 与对应路径，两次不重复', async () => {
+    assert.match(artifactId, /^[a-f0-9]{16}$/u)
+    assert.equal(allocated.path, learning.filesFor(ws).artifactHtml('lesson', artifactId))
+    assert.notEqual((await learning.allocateArtifact(ws, 'lesson')).artifactId, artifactId)
+})
+
+const run = await learning.obtainDirectRun(ws, 'lesson', artifactId)
+await writeFile(allocated.path, HTML_V2)
+
+await check('Run：使用创建时的冻结副本，不受后续编辑影响', async () => {
+    assert.equal(await learning.runs.frozenHtml(run), HTML_V1)
+    assert.equal(await learning.runs.outcome(run), null)
+})
+
+await check('Run：终局只写一次', async () => {
+    const extra = await learning.obtainDirectRun(ws, 'lesson', artifactId)
+    const first = await learning.finishRun(extra, {state: 'completed', payload: {a: 1}})
+    const second = await learning.finishRun(extra, {state: 'aborted'})
+    assert.equal(first.alreadyFinished, false)
+    assert.equal(second.alreadyFinished, true)
+    assert.equal(second.outcome.state, 'completed')
+})
+
+await check('Run：别的进程留下的未终结 Run 读取时判为 aborted', async () => {
+    const stale = await learning.obtainDirectRun(ws, 'lesson', artifactId)
+    await writeFile(learning.filesFor(ws).runBootFile('lesson', artifactId, stale.runId), JSON.stringify({bootId: 'another-process'}))
+    const outcome = await learning.runs.outcome(stale)
+    assert.equal(outcome?.state, 'aborted')
+    assert.ok(JSON.parse(await readFile(learning.filesFor(ws).outcomeFile('lesson', artifactId, stale.runId), 'utf8')).state === 'aborted')
+})
+
+// ---HTTP 路由：用替身 webServer 挂在真实 http 服务上---
+
+let routeHandler
+const routeCtx = {effect: fn => fn(), webServer: {register: route => { routeHandler = route.handler; return () => {} }}, logger: {info() {}, warn() {}}, get: () => undefined}
+installLearningRoutes(routeCtx, learning)
+
+const server = createServer((req, res) => routeHandler(req, res))
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+const origin = `http://127.0.0.1:${server.address().port}`
+
+recordWorkspaceHashIdByGeneratingItFromItsCwd(ws)
 const wsId = generateWorkspaceHashIdOf(ws)
-const base = `http://127.0.0.1:${PORT}/learning/${wsId}/lessons/${hash}`
+const runPath = `/learning/${wsId}/lessons/${artifactId}/runs/${run.runId}`
 
-async function expectThrow(label, fn, re) {
-  try {
-    await fn()
-  } catch (error) {
-    const matched = re.test(error instanceof Error ? error.message : String(error))
-    console.log(label + ':', matched)
-    if (!matched) throw error
-    return
-  }
+await check('路由：Run 页面带 CSP sandbox，内容为冻结副本并注入提交桥', async () => {
+    const response = await fetch(`${origin}${runPath}/index.html`)
+    const body = await response.text()
+    assert.equal(response.status, 200)
+    assert.match(response.headers.get('content-security-policy') ?? '', /^sandbox allow-scripts/u)
+    assert.ok(body.includes('第一版') && body.includes('/learning/bridge.js'))
+})
 
-  console.log(label + ':', false)
-  throw new Error(`${label}：预期抛出异常`)
+await check('路由：只读预览必须带有效预览钥', async () => {
+    const summary = (await learning.listArtifacts(ws, 'lesson')).find(item => item.artifactId === artifactId)
+    assert.ok(summary?.previewUrl.includes('?k='))
+    assert.equal((await fetch(`${origin}/learning/${wsId}/lessons/${artifactId}/index.html`)).status, 403)
+    assert.equal((await fetch(`${origin}/learning/${wsId}/lessons/${artifactId}/index.html?k=${'0'.repeat(32)}`)).status, 403)
+
+    const ok = await fetch(`${origin}${summary.previewUrl}`)
+    assert.equal(ok.status, 200)
+    assert.ok((await ok.text()).includes('第二版'))
+})
+
+await check('路由：Run 提交接受不透明源的跨源预检与提交', async () => {
+    const preflight = await fetch(`${origin}${runPath}/submit`, {method: 'OPTIONS'})
+    assert.equal(preflight.status, 204)
+    assert.equal(preflight.headers.get('access-control-allow-origin'), '*')
+
+    const submitted = await fetch(`${origin}${runPath}/submit`, {method: 'POST', headers: {'Content-Type': 'application/json', Origin: 'null'}, body: JSON.stringify({answer: 1})})
+    assert.equal(submitted.status, 200)
+    assert.equal(submitted.headers.get('access-control-allow-origin'), '*')
+    assert.equal((await learning.runs.outcome(run))?.state, 'completed')
+})
+
+await check('路由：学习 API 写请求缺 X-DVL 头或被标为跨站时拒绝', async () => {
+    const body = JSON.stringify({workspaceId: wsId, category: 'lessons', artifactId})
+    assert.equal((await fetch(`${origin}/learning/api/runs`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body})).status, 403)
+    assert.equal((await fetch(`${origin}/learning/api/notes`, {headers: {'Sec-Fetch-Site': 'cross-site'}})).status, 403)
+    assert.equal((await fetch(`${origin}/learning/api/runs`, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-DVL': '1'}, body})).status, 200)
+})
+
+server.close()
+
+// ---工具：按会话角色声明，参数错误改写为中文---
+
+const tools = new Map()
+installLearningTools({tools: {register: (def, options) => { tools.set(def.name, {def, options}); return () => {} }}}, learning)
+const agent = {id: 's1', session: {header: {cwd: ws}}}
+const whenOf = async (name, audience) => {
+    const original = learning.audienceOf
+    learning.audienceOf = () => audience
+    try {
+        return await tools.get(name).options.when({agent})
+    } finally {
+        learning.audienceOf = original
+    }
 }
 
-// 1．创建与恢复相同 callId 的 run，并用新 callId 重新作答
-const d1 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-1', '第一课')
-const d1r = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-1', '第一课')
-const d2 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-2', '第一课')
-const d3 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-3', '第一课')
-const d4 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-4', '第一课')
-const d5 = await service.createOrResumeRunForSpecificToolCall(ws, 'lesson', 'lesson-1', artifactPath, 'call-5', '第一课')
-console.log('RUNS:', d1.runId === d1r.runId, d1.runId !== d2.runId, d1.kind, d1.category)
-
-// 2．解析展示描述符
-console.log('DESCRIPTOR:', service.resolveDescriptor(ws, 'call-1')?.runId === d1.runId, service.resolveDescriptor('/bogus', 'call-1') === null)
-
-// 3．run URL 注入提交桥且不包含旧目标变量
-const served = await (await fetch(d1.url)).text()
-console.log('RUN_SERVE:', served.includes('/learning/bridge.js'), !served.includes('__DVL_TARGET__'))
-
-// 4．提交桥使用相对 submit 路径与不含机制字段的原始 payload
-const bridgeJs = await (await fetch(`http://127.0.0.1:${PORT}/learning/bridge.js`)).text()
-let captured = null
-const bridgeCtx = {
-  window: {},
-  fetch: (url, opts) => { captured = { url, opts }; return Promise.resolve({ json: () => Promise.resolve({ ok: true }) }) },
-}
-runInNewContext(bridgeJs, bridgeCtx, { filename: 'bridge.js' })
-const bridgePayload = { q: [1, null, 'x'] }
-await bridgeCtx.window.DVL.submit(bridgePayload)
-console.log('BRIDGE:', captured.url === './submit', captured.opts.method === 'POST', captured.opts.body === JSON.stringify(bridgePayload), captured.opts.headers['Content-Type'] === 'application/json')
-
-// 5．iframe 与独立页面将 submit 解析到同一个 run 端点
-const submitPath = new URL('./submit', d1.url).pathname
-console.log('SUBMIT_PATH:', submitPath === `/learning/${wsId}/lessons/${hash}/runs/${d1.runId}/submit`, submitPath.includes(d1.runId))
-
-// 6．只读预览不含 run 路径段且拒绝提交
-const preview = await (await fetch(`${base}/index.html`)).text()
-const previewSubmit = await fetch(`${base}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nope: true }) })
-console.log('PREVIEW_READONLY:', preview.includes('/learning/bridge.js'), !preview.includes('/runs/'), previewSubmit.status === 403)
-
-// 7．run 级不透明提交原样保留 payload
-const payload = { answers: ['a', 1, null, { ok: true }], notes: 'raw' }
-const submit = await fetch(`${base}/runs/${d1.runId}/submit`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(payload),
+await check('工具：未进入学习的会话一个都不声明，创作子代理只拿创作与只读工具', async () => {
+    for (const name of tools.keys()) assert.equal(await whenOf(name, 'none'), false, name)
+    const authored = []
+    for (const name of tools.keys()) if (await whenOf(name, 'author')) authored.push(name)
+    assert.deepEqual(authored.sort(), ['allocate_artifact', 'get_outline', 'get_review_plan'])
+    assert.equal(await whenOf('update_outline', 'root'), true)
 })
-const submitBody = await submit.json()
-console.log('SUBMIT:', submit.status, submitBody.ok === true, submitBody.alreadySubmitted === false)
 
-// 8．重复提交保持幂等且不覆盖首次结果
-const dup = await fetch(`${base}/runs/${d1.runId}/submit`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify('DIFFERENT'),
+await check('工具：参数校验失败返回中文 error 结果而非抛出英文异常', async () => {
+    const execute = tools.get('allocate_artifact').def.execute
+    const unparsable = await execute('{"kind": "les', {agent})
+    assert.equal(unparsable.outcome, 'error')
+    assert.ok(unparsable.detail.startsWith('参数 JSON 无法解析'))
+
+    const invalid = await execute({kind: 'novel'}, {agent})
+    assert.equal(invalid.outcome, 'error')
+    assert.ok(invalid.detail.startsWith('参数不符合工具契约'))
+
+    const valid = await execute({kind: 'quiz'}, {agent})
+    assert.equal(valid.outcome, 'succeeded')
+    assert.match(valid.artifact_id, /^[a-f0-9]{16}$/u)
 })
-const dupBody = await dup.json()
-const result = await files.readResult('lesson', hash, d1.runId)
-console.log('IDEMPOTENT:', dupBody.alreadySubmitted === true, JSON.stringify(result.payload) === JSON.stringify(payload))
 
-// 9．同一 run 并发提交只有一个首次写入者，双方读取同一持久结果
-const [cA, cB] = await Promise.all([
-  service.submit(ws, 'lesson', hash, d3.runId, { which: 'A' }),
-  service.submit(ws, 'lesson', hash, d3.runId, { which: 'B' }),
-])
-const winners = [cA, cB].filter(r => !r.alreadySubmitted).length
-const dupes = [cA, cB].filter(r => r.alreadySubmitted).length
-console.log('CONCURRENT_IDEMPOTENT:', winners === 1, dupes === 1, JSON.stringify(cA.result.payload) === JSON.stringify(cB.result.payload))
+// ---汇总---
 
-// 10．null payload 原样保留
-await service.submit(ws, 'lesson', hash, d2.runId, null)
-const nullResult = await files.readResult('lesson', hash, d2.runId)
-console.log('NULL_PAYLOAD:', nullResult.payload === null)
-
-// 11．get_result 支持指定 run 与读取最近提交
-const explicit = await service.getResult(ws, 'lesson', hash, d1.runId)
-const latest = await service.getResult(ws, 'lesson', hash)
-console.log('GET_RESULT:', explicit.runId === d1.runId, latest !== null && typeof latest.runId === 'string')
-
-// 12．present 直接返回已经落盘的结果且不等待超时
-const immediate = await service.present(ws, 'lesson', hash, d1.runId, { timeoutMs: 5000 })
-console.log('PRESENT_ALREADY_SUBMITTED:', immediate.kind === 'result', immediate.result?.runId === d1.runId)
-
-// 13．带内 present 在提交落盘后结束等待
-const pendingPromise = service.present(ws, 'lesson', hash, d4.runId, { timeoutMs: 8000 })
-setTimeout(async () => { await service.submit(ws, 'lesson', hash, d4.runId, { again: true }) }, 100)
-const outcome = await pendingPromise
-console.log('INBAND:', outcome.kind, outcome.kind === 'result' ? outcome.result.runId === d4.runId : outcome.reason)
-
-// 14．save_feedback 包装并替换不透明报告，且要求已有 result
-const feedback = await service.saveFeedback(ws, 'lesson', hash, d1.runId, { markdown: 'good job', analysis: { gaps: [] } })
-console.log('FEEDBACK_SAVE:', feedback.runId === d1.runId, feedback.payload.markdown === 'good job')
-await service.saveFeedback(ws, 'lesson', hash, d1.runId, { markdown: 'revised' })
-const feedback2 = await files.readFeedback('lesson', hash, d1.runId)
-console.log('FEEDBACK_REPLACE:', feedback2.payload.markdown === 'revised')
-await expectThrow('FEEDBACK_NO_RESULT', () => service.saveFeedback(ws, 'lesson', hash, d5.runId, null), /尚无结果/u)
-
-// 15．复习计划校验来源存在、已有结果和课程归属，并保证幂等
-const proposal = await service.computeReviewPlan(ws, 'lesson-1', 'good', 'lesson', hash, d1.runId, '掌握不错')
-console.log('REVIEW_PROPOSAL:', proposal.alreadyApplied === false, typeof proposal.due === 'string')
-await expectThrow('REVIEW_WRONG_LESSON', () => service.computeReviewPlan(ws, 'lesson-2', 'good', 'lesson', hash, d1.runId), /属于课程 lesson-1，而非 lesson-2/u)
-await expectThrow('REVIEW_UNKNOWN_RUN', () => service.computeReviewPlan(ws, 'lesson-1', 'good', 'lesson', hash, 'no-such-run-id'), /找不到来源运行 no-such-run-id/u)
-await expectThrow('REVIEW_NO_RESULT', () => service.computeReviewPlan(ws, 'lesson-1', 'good', 'lesson', hash, d5.runId), /尚无结果/u)
-const card = await service.commitReviewPlan(ws, 'lesson-1', 'good', 'lesson', hash, d1.runId, '掌握不错')
-const proposal2 = await service.computeReviewPlan(ws, 'lesson-1', 'hard', 'lesson', hash, d1.runId)
-console.log('REVIEW_COMMIT:', card.history.length === 1, card.history[0].rating === 'good', proposal2.alreadyApplied === true)
-await expectThrow('REVIEW_IDEMPOTENT', () => service.commitReviewPlan(ws, 'lesson-1', 'hard', 'lesson', hash, d1.runId), /已应用到复习计划/u)
-
-// 16．状态 API 返回 run 历史与 learningDirExists
-const state = await (await fetch(`http://127.0.0.1:${PORT}/learning/api/state?cwd=${encodeURIComponent(ws)}`)).json()
-const lesson = state.lessons.find(l => l.hash === hash)
-console.log('STATE:', state.workspaceId === wsId, lesson.runs.length === 5, lesson.runs.filter(r => r.hasResult).length === 4)
-console.log('STATE_LEARNING_DIR:', state.learningDirExists === true)
-
-// 17．全局笔记独立端点（不依赖 workspace）
-const notesGet = await fetch(`http://127.0.0.1:${PORT}/learning/api/notes`)
-const notesBody = await notesGet.json()
-console.log('NOTES_ENDPOINT:', notesGet.status === 200, Array.isArray(notesBody.folders), Array.isArray(notesBody.notes))
-
-// 18．投影折叠：dvlLearning 单向阀（空日志 → 未进入；feedback/record 进入标记 → entered 且幂等）
-const { dvlLearningProjection } = await import('../lib/core/projection.js')
-const { learningEnteredText } = await import('../lib/core/learning-event.js')
-const emptySnap = dvlLearningProjection.view(dvlLearningProjection.apply(dvlLearningProjection.init(), { type: 'other', data: {} }))
-const enteredState = dvlLearningProjection.apply(dvlLearningProjection.init(), { type: 'feedback/record', data: { text: learningEnteredText('2026-08-17T00:00:00.000Z') } })
-const enteredAgain = dvlLearningProjection.apply(enteredState, { type: 'feedback/record', data: { text: learningEnteredText('2099-01-01T00:00:00.000Z') } })
-const enteredSnap = dvlLearningProjection.view(enteredState)
-const againSnap = dvlLearningProjection.view(enteredAgain)
-console.log('PROJECTION:', emptySnap.entered === false, enteredSnap.entered === true, enteredSnap.enteredAt === '2026-08-17T00:00:00.000Z', againSnap.enteredAt === enteredSnap.enteredAt)
-
-console.log('SMOKE OK')
-process.exit(0)
+for (const [name, ok] of results) console.log(`${ok ? '✓' : '✗'} ${name}`)
+const failed = results.filter(([, ok]) => !ok).length
+console.log(failed === 0 ? `冒烟通过（${results.length} 项）` : `冒烟失败：${failed}/${results.length} 项`)
+process.exit(failed === 0 ? 0 : 1)

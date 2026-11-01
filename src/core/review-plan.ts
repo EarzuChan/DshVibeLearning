@@ -2,10 +2,10 @@
 
 import {randomUUID} from 'node:crypto'
 import type {Card} from 'ts-fsrs'
-import type {ArtifactHash} from '../shared/artifacts.ts'
+import type {ArtifactId} from '../shared/artifacts.ts'
 import type {ReviewPlan, ReviewPlanRound, ReviewRating, TemporaryReviewPlanRound, TemporaryReviewPlanRoundManifest} from '../shared/model.ts'
 import {cardFromStored, cardToStored, newCard, nextCard} from '../util/fsrs.ts'
-import {isValidArtifactHash, LearningFiles, listJsonFiles, readJson, removePath, writeJson} from './files.ts'
+import {isValidArtifactId, LearningFiles, listJsonFiles, readJson, removePath, writeJson} from './files.ts'
 import {isSafeSegment} from '../util/identifiers.ts'
 
 export interface ReviewPlanCreationInput {
@@ -35,7 +35,7 @@ function confirmRound(round: ReviewPlanRound): void {
     if (round.completedAt !== undefined && Number.isNaN(Date.parse(round.completedAt))) throw new Error(`复习期次完成时间无效：${round.id}`)
     if (round.state === 'active' && round.completedAt !== undefined) throw new Error(`活跃复习期次不能有完成时间：${round.id}`)
     if (round.state === 'completed' && round.completedAt === undefined) throw new Error(`已完成复习期次缺少完成时间：${round.id}`)
-    if (round.artifactHash !== undefined && !isValidArtifactHash(round.artifactHash)) throw new Error(`复习工件哈希无效：${round.id}`)
+    if (round.artifactId !== undefined && !isValidArtifactId(round.artifactId)) throw new Error(`复习工件哈希无效：${round.id}`)
 }
 
 function confirmPlan(plan: ReviewPlan): void {
@@ -59,7 +59,7 @@ function confirmTemporaryRound(round: TemporaryReviewPlanRound): void {
     if (round === null || typeof round !== 'object') throw new Error('临时复习期次必须是对象')
     if (!isSafeSegment(round.id) || !isSafeSegment(round.outlineId) || !isSafeSegment(round.lessonId)) throw new Error('临时复习期次 ID 无效')
     if (Number.isNaN(Date.parse(round.startedAt))) throw new Error(`临时复习期次开始时间无效：${round.id}`)
-    if (round.artifactHash !== undefined && !isValidArtifactHash(round.artifactHash)) throw new Error(`临时复习工件哈希无效：${round.id}`)
+    if (round.artifactId !== undefined && !isValidArtifactId(round.artifactId)) throw new Error(`临时复习工件哈希无效：${round.id}`)
 }
 
 function confirmManifest(manifest: TemporaryReviewPlanRoundManifest): void {
@@ -125,14 +125,14 @@ export class ReviewPlanStore {
         return {plan: updated, round}
     }
 
-    async updateRoundArtifactBinding(planId: string, roundId: string, artifactHash: ArtifactHash): Promise<ReviewPlan> {
+    async updateRoundArtifactBinding(planId: string, roundId: string, artifactId: ArtifactId): Promise<ReviewPlan> {
         const plan = await this.read(planId)
         if (plan === null) throw new Error(`复习计划不存在：${planId}`)
         const round = plan.rounds.find(item => item.id === roundId)
         if (round === undefined) throw new Error(`复习期次不存在：${roundId}`)
         if (round.state !== 'active') throw new Error(`只能绑定活跃复习期次：${roundId}`)
-        if (round.artifactHash !== undefined && round.artifactHash !== artifactHash) throw new Error(`复习期次已经绑定其他工件：${roundId}`)
-        const updated = {...plan, rounds: plan.rounds.map(item => item.id === roundId ? {...item, artifactHash} : item)}
+        if (round.artifactId !== undefined && round.artifactId !== artifactId) throw new Error(`复习期次已经绑定其他工件：${roundId}`)
+        const updated = {...plan, rounds: plan.rounds.map(item => item.id === roundId ? {...item, artifactId} : item)}
         await this.write(updated)
         return updated
     }
@@ -170,27 +170,27 @@ export class ReviewPlanStore {
         return {manifest: updated, round}
     }
 
-    async preserveArtifactAsTemporary(outlineId: string, lessonId: string, artifactHash: ArtifactHash): Promise<TemporaryReviewPlanRoundManifest> {
+    async preserveArtifactAsTemporary(outlineId: string, lessonId: string, artifactId: ArtifactId): Promise<TemporaryReviewPlanRoundManifest> {
         const manifest = await this.temporaryManifest()
-        const round: TemporaryReviewPlanRound = {id: randomUUID(), outlineId, lessonId, startedAt: nowIso(), artifactHash}
+        const round: TemporaryReviewPlanRound = {id: randomUUID(), outlineId, lessonId, startedAt: nowIso(), artifactId}
         const updated = {rounds: [...manifest.rounds, round]}
         await this.writeTemporaryManifest(updated)
         return updated
     }
 
-    async updateTemporaryRoundArtifactBinding(roundId: string, artifactHash: ArtifactHash): Promise<TemporaryReviewPlanRoundManifest> {
+    async updateTemporaryRoundArtifactBinding(roundId: string, artifactId: ArtifactId): Promise<TemporaryReviewPlanRoundManifest> {
         const manifest = await this.temporaryManifest()
         const round = manifest.rounds.find(item => item.id === roundId)
         if (round === undefined) throw new Error(`临时复习期次不存在：${roundId}`)
-        if (round.artifactHash !== undefined && round.artifactHash !== artifactHash) throw new Error(`临时复习期次已经绑定其他工件：${roundId}`)
-        const updated = {rounds: manifest.rounds.map(item => item.id === roundId ? {...item, artifactHash} : item)}
+        if (round.artifactId !== undefined && round.artifactId !== artifactId) throw new Error(`临时复习期次已经绑定其他工件：${roundId}`)
+        const updated = {rounds: manifest.rounds.map(item => item.id === roundId ? {...item, artifactId} : item)}
         await this.writeTemporaryManifest(updated)
         return updated
     }
 
-    async removeTemporaryRoundsForArtifact(artifactHash: ArtifactHash): Promise<TemporaryReviewPlanRoundManifest> {
+    async removeTemporaryRoundsForArtifact(artifactId: ArtifactId): Promise<TemporaryReviewPlanRoundManifest> {
         const manifest = await this.temporaryManifest()
-        const updated = {rounds: manifest.rounds.filter(round => round.artifactHash !== artifactHash)}
+        const updated = {rounds: manifest.rounds.filter(round => round.artifactId !== artifactId)}
         if (updated.rounds.length !== manifest.rounds.length) await this.writeTemporaryManifest(updated)
         return updated
     }
@@ -199,13 +199,13 @@ export class ReviewPlanStore {
         const manifest = await this.temporaryManifest()
         const temporary = manifest.rounds.find(item => item.id === roundId)
         if (temporary === undefined) throw new Error(`临时复习期次不存在：${roundId}`)
-        if (temporary.artifactHash === undefined) throw new Error(`临时复习期次尚未绑定工件：${roundId}`)
+        if (temporary.artifactId === undefined) throw new Error(`临时复习期次尚未绑定工件：${roundId}`)
         const plan = await this.read(planId)
         if (plan === null) throw new Error(`复习计划不存在：${planId}`)
         if (plan.outlineId !== temporary.outlineId || plan.lessonId !== temporary.lessonId) throw new Error('临时复习期次与目标复习计划不匹配')
         if (plan.rounds.some(round => round.state === 'active')) throw new Error('目标复习计划仍有活跃期次')
         const completedAt = nowIso()
-        const round: ReviewPlanRound = {id: randomUUID(), state: 'completed', startedAt: temporary.startedAt, completedAt, artifactHash: temporary.artifactHash}
+        const round: ReviewPlanRound = {id: randomUUID(), state: 'completed', startedAt: temporary.startedAt, completedAt, artifactId: temporary.artifactId}
         const updatedPlan = {...plan, rounds: [...plan.rounds, round]}
         const updatedManifest = {rounds: manifest.rounds.filter(item => item.id !== roundId)}
         await this.write(updatedPlan)

@@ -1,10 +1,15 @@
 // DVL 浏览器端：负责生命周期控制、学习/笔记数据源，以及三个 UI contribution
 
-import type {ClientContext, SessionId} from '@deepseek-ai/dsh-client-runtime/client'
-import {createSnapshotStore, type SnapshotStore} from '@deepseek-ai/dsh-client-runtime/client'
+import type {Context as ClientContext} from '@deepseek-ai/cordis'
+import type {SessionId} from '@deepseek-ai/dsh-session/types'
+import {createSnapshotStore, type SnapshotStore} from '@deepseek-ai/dsh-client-store'
 import type {} from '@deepseek-ai/dsh-client-locale/client' // 仅用于合并 ctx.locale 的 Context 类型
+import type {} from '@deepseek-ai/dsh-api-session-controller/client' // 仅用于合并 ctx.sessions 的 Context 类型
+import type {} from '@deepseek-ai/dsh-api-workspace-controller/client' // 仅用于合并 ctx.workspaces 的 Context 类型
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client' // 仅用于合并 ctx.uiWorkspace 的 Context 类型
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client' // 仅用于合并 ctx.slots 的 Context 类型
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client' // 仅用于合并 conversation.view、header utilities 等 SlotMap 类型
-import {abortRun, artifactUrl, buildNotesActions, createDirectRun, deleteLearningEntity, fetchLearningData, fetchLearningWorkspace, fetchNotes, inbandPresentExisting, openDataChangeStream, openInteractionStream, respondToInteraction, resolveDescriptor, runUrl, startDueReview} from './api.ts'
+import {abortRun, buildNotesActions, createDirectRun, deleteLearningEntity, fetchLearningData, fetchLearningWorkspace, fetchNotes, inbandPresentExisting, openDataChangeStream, openInteractionStream, respondToInteraction, resolveDescriptor, runUrl, startDueReview} from './api.ts'
 import type {LearningApi, LearningViewInject, NotesActions, NotesCardInject, PresentToolViewInject} from './contract.ts'
 import {LearningView} from './LearningView.tsx'
 import {en, NS, zh} from './locales.ts'
@@ -14,12 +19,12 @@ import {InBandPresentArtifactView} from './InBandPresentArtifactView.tsx'
 import {InteractionDialog} from './InteractionDialog.tsx'
 import {createDvlViewStore, idleLearningDomain, idleNotesDomain, idleWorkspaceDomain} from './stores.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {DataChangeDto} from '../shared/api.ts'
+import type {DataChangeDto, InbandPresentResult} from '../shared/api.ts'
 import {CORDIS_EFFECT_DATA_CHANGE_SUBSCRIBER, CORDIS_EFFECT_DICTIONARIES, CORDIS_EFFECT_LEARNING_DATA_CONTROLLER, CORDIS_EFFECT_LEARNING_VIEW_TAB, CORDIS_EFFECT_LIFECYCLE_CONTROLLER, CORDIS_SLOT_CONVERSATION_VIEW, CORDIS_SLOT_FOR_MY_EX_PANEL, CORDIS_SLOT_TOOL_CALL_TOOLVIEW, DVL_INTERACTION_DIALOG_ID, LEARNING_NOTES_CARD_ID, LEARNING_OUTLINE_CARD_ID, LEARNING_VIEW_ID} from '../shared/constants.ts'
 import type {LearningSourceState, NotesSourceState, WorkspaceSourceState} from './state.ts'
 
 // 必需服务，目标 slot 由 ui-conversation 声明，因此 apply 会通过 slots.inject 等待它们
-export const inject = ['slots', 'sessions', 'workspaces', 'locale']
+export const inject = ['slots', 'sessions', 'workspaces', 'locale', 'uiWorkspace']
 
 // 会话快照中实际使用的字段子集
 interface SessionRow {
@@ -176,29 +181,47 @@ export function apply(ctx: ClientContext): void {
             return cwd !== null && workspace.cwd === cwd ? workspace.workspaceId ?? '' : ''
         }
 
-        const urlFor = (category: ArtifactCategory, hash: string): string => artifactUrl(knownWorkspaceId(), category, hash)
+        // 预览地址带后端签发的预览钥，只能取自已加载的学习数据
+        // 目标为空表示新会话：先在同一工作区建会话并打开它（打开即令其上线），再投递意图
+        const deliverTo = async (targetSessionId: string, deliver: (target: string) => Promise<InbandPresentResult>): Promise<InbandPresentResult> => {
+            if (targetSessionId !== '') return deliver(targetSessionId)
+
+            const cwd = getCwdOrNullBySessionId(sessionId)
+            if (cwd === null) throw new Error('DVL：当前会话没有工作区 cwd')
+
+            const created = await ctx.sessions.create({cwd})
+            console.info(`[DVL] 已为带内学习新建会话 ${String(created)}`)
+            ctx.uiWorkspace.openSession(created)
+            return deliver(String(created))
+        }
+
+        const urlFor = (category: ArtifactCategory, artifactId: string): string => {
+            const data = learningSource.getSnapshot().learning.data
+            const list = data === null ? [] : category === 'lessons' ? data.lessons : category === 'reviews' ? data.reviews : data.quizzes
+            return list.find(artifact => artifact.artifactId === artifactId)?.previewUrl ?? 'about:blank'
+        }
 
         return {
             refresh,
-            createDirectRun: async (category, hash) => {
+            createDirectRun: async (category, artifactId) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                return createDirectRun(ws, category, hash)
+                return createDirectRun(ws, category, artifactId)
             },
-            abortRun: async (category, hash, runId) => {
+            abortRun: async (category, artifactId, runId) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                await abortRun(ws, category, hash, runId)
+                await abortRun(ws, category, artifactId, runId)
             },
-            inbandPresentExisting: async (category, hash, targetSessionId, runId) => {
+            inbandPresentExisting: async (category, artifactId, targetSessionId, runId) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                return inbandPresentExisting(ws, category, hash, targetSessionId, runId)
+                return deliverTo(targetSessionId, target => inbandPresentExisting(ws, category, artifactId, target, sessionId, runId))
             },
             startDueReview: async (planId, targetSessionId) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                return startDueReview(ws, planId, targetSessionId)
+                return deliverTo(targetSessionId, target => startDueReview(ws, planId, target, sessionId))
             },
             deleteOutline: async id => {
                 const ws = await ensureWorkspaceId()
@@ -210,12 +233,12 @@ export function apply(ctx: ClientContext): void {
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
                 await deleteLearningEntity(ws, {target: 'review-plan', id, preserveArtifacts})
             },
-            deleteArtifact: async (category, hash) => {
+            deleteArtifact: async (category, artifactId) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                await deleteLearningEntity(ws, {target: 'artifact', category, hash})
+                await deleteLearningEntity(ws, {target: 'artifact', category, artifactId})
             },
-            openRun: (category, hash, runId) => { window.open(runUrl(knownWorkspaceId(), category, hash, runId), '_blank', 'noopener') },
+            openRun: (category, artifactId, runId) => { window.open(runUrl(knownWorkspaceId(), category, artifactId, runId), '_blank', 'noopener') },
             artifactUrl: urlFor,
         }
     }
@@ -327,6 +350,6 @@ export function apply(ctx: ClientContext): void {
     // TIPS：挂载 IN-BAND工件展现 视图
     ctx.slots.inject(CORDIS_SLOT_TOOL_CALL_TOOLVIEW, () => ctx.slots.register({
         name: CORDIS_SLOT_TOOL_CALL_TOOLVIEW, key: 'present_artifact', locale: NS, store,
-        inject: (): PresentToolViewInject => ({resolveDescriptor: (cwd, callId) => resolveDescriptor(cwd, callId), abortRun: async descriptor => abortRun(descriptor.workspaceId, descriptor.kind === 'lesson' ? 'lessons' : descriptor.kind === 'review' ? 'reviews' : 'quizzes', descriptor.hash, descriptor.runId)}),
+        inject: (): PresentToolViewInject => ({resolveDescriptor: (cwd, callId) => resolveDescriptor(cwd, callId), abortRun: async descriptor => abortRun(descriptor.workspaceId, descriptor.kind === 'lesson' ? 'lessons' : descriptor.kind === 'review' ? 'reviews' : 'quizzes', descriptor.artifactId, descriptor.runId)}),
     }, InBandPresentArtifactView))
 }

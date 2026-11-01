@@ -1,6 +1,6 @@
 // DVL 浏览器端 store：框架 store 仅保存 UI 观看状态，学习与笔记数据域由 apply 闭包中的引擎快照 store 管理，并通过 useLearning/useNotes 供组件订阅
 
-import {defineStore, type EngineStoreHandle} from '@deepseek-ai/dsh-client-runtime/client'
+import {defineStore, type EngineStoreHandle} from '@deepseek-ai/dsh-client-store'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
 import type {LearningDomain, NotesDomain, WorkspaceDomain} from './state.ts'
 
@@ -9,7 +9,7 @@ export type {LearningDomain, NotesDomain, WorkspaceDomain} from './state.ts'
 // DVL 共享观看状态
 export type DvlViewState = {
   tab: 'outlines' | 'reviews' | 'quizzes' // 学习视图当前子 tab
-  preview: {category: ArtifactCategory; hash: string} | null // 当前内联预览目标，null 表示不显示预览
+  preview: {category: ArtifactCategory; artifactId: string} | null // 当前内联预览目标，null 表示不显示预览
 }
 
 // DVL 共享观看状态操作

@@ -10,7 +10,6 @@ export const CORDIS_EFFECT_DATA_CHANGE_SUBSCRIBER = 'dvl: data change subscriber
 export const CORDIS_EFFECT_LEARNING_DATA_CONTROLLER = 'dvl: learning data controller'
 export const CORDIS_EFFECT_LEARNING_VIEW_TAB = 'dvl: learning view tab'
 export const CORDIS_EFFECT_BACKEND_ROUTES = 'dvl: /learning routes'
-export const CORDIS_EFFECT_AGENT_TOOLS = 'dvl: agent tools'
 
 // UI 挂载点
 

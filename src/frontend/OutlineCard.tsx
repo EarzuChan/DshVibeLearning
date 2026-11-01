@@ -2,7 +2,7 @@
 
 import {useMemo, useState} from 'react'
 import clsx from 'clsx'
-import {IconChevronDownOutline14} from '@deepseek-ai/dsh-client-ui-primitives'
+import {IconChevronDownOutlineMedium} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {OutlineCardProps} from './contract.ts'
 import type {} from '../shared/projection.ts'
 import type {OutlineLessonNode, OutlineNode} from '../shared/model.ts'
@@ -34,7 +34,7 @@ export function OutlineCard({useLearning, useProjection, t}: OutlineCardProps) {
         <div className={css.card}>
             <button type="button" className={css.header} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
                 <span className={css.title}>{t('card.outline.title')}</span>
-                <IconChevronDownOutline14 className={clsx(css.chevron, expanded && css.chevronOpen)}/>
+                <IconChevronDownOutlineMedium className={clsx(css.chevron, expanded && css.chevronOpen)}/>
             </button>
 
             {expanded && <div className={css.body}>{learning.phase === 'error' ? <div className={css.empty}>{t('state.error')}</div> : learning.phase !== 'ready' ? <div className={css.empty}>{t('state.loading')}</div> : active === null ? <div className={css.empty}>{t('card.outline.empty')}</div> : <ul className={css.list}>{active.lessons.map(lesson => {

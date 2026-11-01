@@ -2,7 +2,7 @@
 
 import {randomUUID} from 'node:crypto'
 import type {Outline, OutlineNode, OutlinePhase, OutlineWorkflow} from '../shared/model.ts'
-import {isValidArtifactHash, LearningFiles, listJsonFiles, readJson, removePath, writeJson} from './files.ts'
+import {isValidArtifactId, LearningFiles, listJsonFiles, readJson, removePath, writeJson} from './files.ts'
 import {isSafeSegment} from '../util/identifiers.ts'
 
 export interface OutlineInput {
@@ -29,7 +29,7 @@ export function findOutlineLesson(outline: Outline, lessonId: string): OutlineNo
     return found
 }
 
-export function outlineArtifactHashes(outline: Outline): string[] {
+export function outlineArtifactIds(outline: Outline): string[] {
     return Object.values(outline.artifactBindings)
 }
 
@@ -50,9 +50,9 @@ export function confirmOutline(outline: Outline): void {
     })
 
     if (outline.artifactBindings === null || typeof outline.artifactBindings !== 'object' || Array.isArray(outline.artifactBindings)) throw new Error('大纲工件绑定必须是对象')
-    for (const [lessonId, artifactHash] of Object.entries(outline.artifactBindings)) {
+    for (const [lessonId, artifactId] of Object.entries(outline.artifactBindings)) {
         if (!lessonIds.has(lessonId)) throw new Error(`工件绑定引用了不存在的课程：${lessonId}`)
-        if (!isValidArtifactHash(artifactHash)) throw new Error(`工件绑定哈希无效：${artifactHash}`)
+        if (!isValidArtifactId(artifactId)) throw new Error(`工件绑定哈希无效：${artifactId}`)
     }
 
     const workflow = outline.workflow
@@ -106,14 +106,14 @@ export class OutlineStore {
         await writeJson(this.files.outlineFile(outline.id), outline)
     }
 
-    async updateArtifactBinding(outlineId: string, lessonId: string, artifactHash: string | null): Promise<Outline> {
+    async updateArtifactBinding(outlineId: string, lessonId: string, artifactId: string | null): Promise<Outline> {
         const outline = await this.read(outlineId)
         if (outline === null) throw new Error(`纲目不存在：${outlineId}`)
         if (findOutlineLesson(outline, lessonId)?.kind !== 'lesson') throw new Error(`课程不存在：${lessonId}`)
 
         const artifactBindings = {...outline.artifactBindings}
-        if (artifactHash === null) delete artifactBindings[lessonId]
-        else artifactBindings[lessonId] = artifactHash
+        if (artifactId === null) delete artifactBindings[lessonId]
+        else artifactBindings[lessonId] = artifactId
         const updated = {...outline, artifactBindings}
         confirmOutline(updated)
         await this.write(updated)

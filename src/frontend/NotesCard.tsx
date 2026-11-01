@@ -2,7 +2,7 @@
 
 import {useState} from 'react'
 import clsx from 'clsx'
-import {Button, IconChevronDownOutline14, Modal} from '@deepseek-ai/dsh-client-ui-primitives'
+import {Button, IconChevronDownOutlineMedium, Modal} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {NotesCardProps} from './contract.ts'
 import type {Note, NoteAccess} from '../shared/model.ts'
 import css from './NotesCard.module.css'
@@ -89,7 +89,7 @@ export function NotesCard({useNotes, card, t}: NotesCardProps) {
       <div className={css.card}>
         <button type="button" className={css.header} aria-expanded={expanded} onClick={() => { setExpanded(v => !v) }}>
           <span className={css.title}>{t('card.notes.title')}</span>
-          <IconChevronDownOutline14 className={clsx(css.chevron, expanded && css.chevronOpen)} />
+          <IconChevronDownOutlineMedium className={clsx(css.chevron, expanded && css.chevronOpen)} />
         </button>
 
         {expanded && (
