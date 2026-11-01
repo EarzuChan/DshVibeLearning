@@ -152,7 +152,7 @@ export const zh: Record<VibeLearningKey, string> = {
   'notes.error': '操作失败',
   'state.unavailable': '学习状态不可用',
   'state.loading': '加载中…',
-  'state.idle': '待命中',
+  'state.idle': '本工作区尚未开启氛围学习，在会话中输入 /learn 即可开始',
   'state.error': '加载失败',
   'card.outline.notLearning': '本会话未进入氛围学习',
 }
@@ -229,7 +229,7 @@ export const en: Record<VibeLearningKey, string> = {
   'notes.error': 'Operation failed',
   'state.unavailable': 'Learning state unavailable',
   'state.loading': 'Loading…',
-  'state.idle': 'Idle',
+  'state.idle': 'Vibe learning is not enabled in this workspace yet. Type /learn in the session to start.',
   'state.error': 'Load failed',
   'card.outline.notLearning': 'Not Learning',
 }

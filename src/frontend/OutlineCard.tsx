@@ -37,7 +37,7 @@ export function OutlineCard({useLearning, useProjection, t}: OutlineCardProps) {
                 <IconChevronDownOutlineMedium className={clsx(css.chevron, expanded && css.chevronOpen)}/>
             </button>
 
-            {expanded && <div className={css.body}>{learning.phase === 'error' ? <div className={css.empty}>{t('state.error')}</div> : learning.phase !== 'ready' ? <div className={css.empty}>{t('state.loading')}</div> : active === null ? <div className={css.empty}>{t('card.outline.empty')}</div> : <ul className={css.list}>{active.lessons.map(lesson => {
+            {expanded && <div className={css.body}>{projection?.entered !== true ? <div className={css.empty}>{t('card.outline.notLearning')}</div> : learning.phase === 'error' ? <div className={css.empty}>{t('state.error')}</div> : learning.phase === 'idle' ? <div className={css.empty}>{t('state.idle')}</div> : learning.phase !== 'ready' ? <div className={css.empty}>{t('state.loading')}</div> : active === null ? <div className={css.empty}>{t('card.outline.empty')}</div> : <ul className={css.list}>{active.lessons.map(lesson => {
                 const current = active.outline.workflow.currentLessonId === lesson.id
                 const completed = active.outline.workflow.completedLessonIds.includes(lesson.id)
                 return <li key={lesson.id} className={clsx(css.lesson, current && css.lessonCurrent)}><span className={css.lessonTitle}>{lesson.title}</span>{current && <span className={css.currentBadge}>{active.outline.workflow.phase === 'qa' ? '答疑中' : '学习中'}</span>}{completed && <span className={css.currentBadge}>已完成</span>}</li>

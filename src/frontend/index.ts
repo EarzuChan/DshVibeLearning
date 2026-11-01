@@ -26,15 +26,16 @@ import type {LearningSourceState, NotesSourceState, WorkspaceSourceState} from '
 // 必需服务，目标 slot 由 ui-conversation 声明，因此 apply 会通过 slots.inject 等待它们
 export const inject = ['slots', 'sessions', 'workspaces', 'locale', 'uiWorkspace']
 
-// 会话快照中实际使用的字段子集
-interface SessionRow {
-    readonly cwd?: string
+// 官方“当前选中会话”的 store：uiWorkspace 未公开它，只能按运行时形状取用
+interface MainSelectionStore {
+    getSnapshot(): {readonly sessionId?: SessionId}
+    subscribe(listener: () => void): () => void
 }
 
-// sessions list 快照中实际使用的字段子集
-interface SessionListSnapshot {
-    readonly current?: SessionId
-    readonly byId?: Record<string, SessionRow>
+// 反射取得 uiWorkspace 私有的 selection；形状不符（如上游改名）时返回 null，由调用方退回常驻 tab
+function probeMainSelection(uiWorkspace: unknown): MainSelectionStore | null {
+    const selection = (uiWorkspace as {selection?: Partial<MainSelectionStore>} | undefined)?.selection
+    return typeof selection?.getSnapshot === 'function' && typeof selection.subscribe === 'function' ? selection as MainSelectionStore : null
 }
 
 // 注册学习视图与两张常驻面板，并维护对应的数据生命周期。前端的 Cordis
@@ -49,10 +50,19 @@ export function apply(ctx: ClientContext): void {
     const notesSource: SnapshotStore<NotesSourceState> = createSnapshotStore({notes: idleNotesDomain()})
     const workspaceSource: SnapshotStore<WorkspaceSourceState> = createSnapshotStore({workspace: idleWorkspaceDomain()})
 
-    // 解析会话所属工作区 cwd，优先使用会话头，缺失时回退到工作区列表。FUCK：和getCurrentSessionCwdOrNull有作用重叠
+    // 当前会话：优先跟随官方选择；取不到时由学习视图渲染时上报所在会话
+    const mainSelection = probeMainSelection(ctx.uiWorkspace)
+    if (mainSelection === null) console.warn('[DVL] 未能取得官方的当前会话选择，学习 tab 改为常驻显示')
+
+    const reportedSession: SnapshotStore<{sessionId: SessionId | null}> = createSnapshotStore({sessionId: null})
+    const reportSession = (sessionId: SessionId): void => { if (reportedSession.getSnapshot().sessionId !== sessionId) reportedSession.set({sessionId}) }
+
+    const getCurrentSessionIdOrNull = (): SessionId | null => mainSelection === null ? reportedSession.getSnapshot().sessionId : mainSelection.getSnapshot().sessionId ?? null
+    const subscribeCurrentSession = (listener: () => void): (() => void) => mainSelection === null ? reportedSession.subscribe(listener) : mainSelection.subscribe(listener)
+
+    // 解析会话所属工作区 cwd，优先使用会话列表，缺失时回退到工作区列表
     const getCwdOrNullBySessionId = (sessionId: SessionId): string | null => {
-        const sessions = ctx.sessions.list.getSnapshot()
-        const row = (sessions.byId as Record<string, SessionRow | undefined>)[sessionId]
+        const row: {readonly cwd?: string} | undefined = ctx.sessions.list.getSnapshot().byId[sessionId]
         if (row?.cwd !== undefined && row.cwd !== '') return row.cwd
 
         const workspaces = ctx.workspaces.list.getSnapshot()
@@ -126,17 +136,18 @@ export function apply(ctx: ClientContext): void {
         }
     }
 
-    // TIPS：生命周期控制器：订阅 sessions list，cwd 变化时重载
+    // TIPS：当前会话的 cwd；无当前会话或无工作区时返回 null
+    const getCurrentSessionCwdOrNull = (): string | null => {
+        const sessionId = getCurrentSessionIdOrNull()
+        return sessionId === null ? null : getCwdOrNullBySessionId(sessionId)
+    }
+
+    // TIPS：生命周期控制器：订阅当前会话与 sessions list，cwd 变化时重载
     ctx.effect(() => {
         let lastCwd: string | null | undefined = undefined
 
         const evaluate = (): void => {
-            const snapshot = ctx.sessions.list.getSnapshot() as SessionListSnapshot
-            const current = snapshot.current
-            const row = current !== undefined ? snapshot.byId?.[current] : undefined
-
-            const cwd = row?.cwd !== undefined && row.cwd !== '' ? row.cwd : null
-
+            const cwd = getCurrentSessionCwdOrNull()
             if (cwd === lastCwd) return
 
             lastCwd = cwd
@@ -148,10 +159,14 @@ export function apply(ctx: ClientContext): void {
 
         void refreshNotes()
 
-        const disposer = ctx.sessions.list.subscribe(evaluate)
+        const disposeList = ctx.sessions.list.subscribe(evaluate)
+        const disposeCurrent = subscribeCurrentSession(evaluate)
         evaluate()
 
-        return disposer
+        return () => {
+            disposeList()
+            disposeCurrent()
+        }
     }, CORDIS_EFFECT_LIFECYCLE_CONTROLLER)
 
     // 构造单个会话使用的学习 API，包括刷新、展示和工件 URL
@@ -245,14 +260,6 @@ export function apply(ctx: ClientContext): void {
 
     const makeNotes = (): NotesActions => buildNotesActions()
 
-    // TIPS：当前选中会话的 cwd；无工作区时返回 null
-    const getCurrentSessionCwdOrNull = (): string | null => {
-        const snapshot = ctx.sessions.list.getSnapshot() as SessionListSnapshot
-        const current = snapshot.current
-        const row = current !== undefined ? snapshot.byId?.[current] : undefined
-        return row?.cwd !== undefined && row.cwd !== '' ? row.cwd : null
-    }
-
     // 订阅后端数据失效信号，只触发重新拉取，不在前端推导第二套业务状态
     ctx.effect(() => {
         const onChange = (change: DataChangeDto): void => {
@@ -299,21 +306,27 @@ export function apply(ctx: ClientContext): void {
         return disposer
     }, CORDIS_EFFECT_LEARNING_DATA_CONTROLLER)
 
-    // TIPS：学习 tab：【订阅 workspaceSource】，并根据当前工作区动态注册或注销
+    // 注册学习 tab。兜底模式下视图渲染时上报所在会话，推迟到渲染之后以免在渲染中改 store
+    const registerLearningView = (): (() => void) => ctx.slots.inject(CORDIS_SLOT_CONVERSATION_VIEW, () => ctx.slots.register({
+        name: CORDIS_SLOT_CONVERSATION_VIEW, id: LEARNING_VIEW_ID, order: 20, locale: NS, label: () => t('view.label'), store,
+        inject: (sessionId, _): LearningViewInject => {
+            if (mainSelection === null) queueMicrotask(() => reportSession(sessionId))
+            return {api: makeApi(sessionId), notes: makeNotes(), hooks: {learning: learningSource}}
+        },
+    }, LearningView))
+
+    // TIPS：学习 tab：能跟随当前会话时只在学习工作区挂载；跟随不了就常驻，由视图自己显示未进入状态
     ctx.effect(() => {
+        if (mainSelection === null) return registerLearningView()
+
         let viewDisposer: (() => void) | null = null
 
         const evaluate = (): void => {
             // 是学习工作区就挂，反之消
             const isLearningWorkspace = workspaceSource.getSnapshot().workspace.isLearningWorkspace
 
-            if (isLearningWorkspace && viewDisposer === null) {
-                // 注册UI槽位
-                viewDisposer = ctx.slots.inject(CORDIS_SLOT_CONVERSATION_VIEW, () => ctx.slots.register({
-                    name: CORDIS_SLOT_CONVERSATION_VIEW, id: LEARNING_VIEW_ID, order: 20, locale: NS, label: () => t('view.label'), store,
-                    inject: (sessionId, _): LearningViewInject => ({api: makeApi(sessionId), notes: makeNotes(), hooks: {learning: learningSource}}),
-                }, LearningView))
-            } else if (!isLearningWorkspace && viewDisposer !== null) {
+            if (isLearningWorkspace && viewDisposer === null) viewDisposer = registerLearningView()
+            else if (!isLearningWorkspace && viewDisposer !== null) {
                 viewDisposer()
                 viewDisposer = null
             }
@@ -333,7 +346,10 @@ export function apply(ctx: ClientContext): void {
 
     ctx.slots.inject(CORDIS_SLOT_FOR_MY_EX_PANEL, () => ctx.slots.register({
         name: CORDIS_SLOT_FOR_MY_EX_PANEL, id: LEARNING_OUTLINE_CARD_ID, order: 30, locale: NS, store,
-        inject: (): { hooks: { learning: SnapshotStore<LearningSourceState> } } => ({hooks: {learning: learningSource}}),
+        inject: (sessionId: SessionId): { hooks: { learning: SnapshotStore<LearningSourceState> } } => {
+            if (mainSelection === null) queueMicrotask(() => reportSession(sessionId))
+            return {hooks: {learning: learningSource}}
+        },
     }, OutlineCard))
 
     ctx.slots.inject(CORDIS_SLOT_FOR_MY_EX_PANEL, () => ctx.slots.register({
