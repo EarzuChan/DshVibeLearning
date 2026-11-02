@@ -7,7 +7,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-chat/client' // 仅用于引入 
 import type {} from '@deepseek-ai/dsh-client-ui-session/client' // 仅用于引入会话标准 props（sessionId、useProjection 等）的类型合并
 import type {ToolCallViewProps} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {ArtifactRunDescriptor, InbandPresentResult, PendingInteractionDto} from '../shared/api.ts'
+import type {ArtifactRunDescriptor, InbandPresentResult, PanelOutlineMode, PendingInteractionDto} from '../shared/api.ts'
 import {CORDIS_SLOT_CONVERSATION_VIEW, CORDIS_SLOT_FOR_MY_EX_PANEL} from '../shared/constants.ts'
 import type {NoteAccess} from '../shared/model.ts'
 import type {createDvlViewStore} from './stores.ts'
@@ -31,12 +31,13 @@ export interface LearningApi {
   refresh: () => Promise<void> // 重新获取学习状态并写入共享 store，失败时抛错
   createDirectRun: (category: ArtifactCategory, artifactId: string) => Promise<ArtifactRunDescriptor>
   abortRun: (category: ArtifactCategory, artifactId: string, runId: string) => Promise<void>
-  inbandPresentExisting: (category: ArtifactCategory, artifactId: string, sessionId: string, runId?: string) => Promise<InbandPresentResult>
-  startDueReview: (planId: string, sessionId: string) => Promise<InbandPresentResult>
+  inbandPresentExisting: (category: ArtifactCategory, artifactId: string, sessionId: string, outlineMode: PanelOutlineMode, runId?: string) => Promise<InbandPresentResult> // sessionId 为空表示新会话
+  startDueReview: (planId: string, sessionId: string, outlineMode: PanelOutlineMode) => Promise<InbandPresentResult>
+  sessionTitle: (sessionId: string) => string | null // 会话列表中的显示名，不在列表中时为 null
   deleteOutline: (id: string) => Promise<void>
   deleteReviewPlan: (id: string, preserveArtifacts: boolean) => Promise<void>
   deleteArtifact: (category: ArtifactCategory, artifactId: string) => Promise<void>
-  openRun: (category: ArtifactCategory, artifactId: string, runId: string) => void
+  runUrl: (category: ArtifactCategory, artifactId: string, runId: string) => string // 可提交的 Run 页面 URL
   artifactUrl: (category: ArtifactCategory, artifactId: string) => string // 获取禁用提交的工件只读预览 URL
 }
 

@@ -2,7 +2,7 @@
 
 import type {NotesActions} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {AbortRunRequest, ArtifactRunDescriptor, DataChangeDto, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, InbandPresentResult, InteractionEventDto, LearningDataDto, LearningWorkspaceDto, NotesDto} from '../shared/api.ts'
+import type {AbortRunRequest, ArtifactRunDescriptor, DataChangeDto, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, InbandPresentResult, PanelOutlineMode, InteractionEventDto, LearningDataDto, LearningWorkspaceDto, NotesDto} from '../shared/api.ts'
 import {DVL_SERVER_ROUTE_PREFIX} from '../shared/constants.ts'
 
 // 写请求统一带上自定义头，跨站页面无法不经预检伪造
@@ -44,14 +44,14 @@ export function respondToInteraction(interactionId: string, sessionId: string, o
 }
 
 // 发起带内展示请求并返回服务端结束结果
-export function inbandPresentExisting(workspaceId: string, category: ArtifactCategory, artifactId: string, sessionId: string, sourceSessionId: string, runId?: string): Promise<InbandPresentResult> {
-  const body: InbandPresentRequest = {intent: 'present-existing', workspaceId, category, artifactId, sessionId, sourceSessionId, ...(runId === undefined ? {} : {runId})}
+export function inbandPresentExisting(workspaceId: string, category: ArtifactCategory, artifactId: string, sessionId: string, sourceSessionId: string, outlineMode: PanelOutlineMode, runId?: string): Promise<InbandPresentResult> {
+  const body: InbandPresentRequest = {intent: 'present-existing', workspaceId, category, artifactId, sessionId, sourceSessionId, outlineMode, ...(runId === undefined ? {} : {runId})}
   return requestJson<InbandPresentResult>(`${DVL_SERVER_ROUTE_PREFIX}/api/inband-present`, {method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body)})
 }
 
 // 请求模型在指定会话中开始一个已经到期的复习期次
-export function startDueReview(workspaceId: string, planId: string, sessionId: string, sourceSessionId: string): Promise<InbandPresentResult> {
-  const body: InbandPresentRequest = {intent: 'start-due-review', workspaceId, planId, sessionId, sourceSessionId}
+export function startDueReview(workspaceId: string, planId: string, sessionId: string, sourceSessionId: string, outlineMode: PanelOutlineMode): Promise<InbandPresentResult> {
+  const body: InbandPresentRequest = {intent: 'start-due-review', workspaceId, planId, sessionId, sourceSessionId, outlineMode}
   return requestJson<InbandPresentResult>(`${DVL_SERVER_ROUTE_PREFIX}/api/inband-present`, {method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body)})
 }
 

@@ -35,6 +35,8 @@ export interface Outline {
   readonly tree: readonly OutlineNode[]
   readonly artifactBindings: OutlineArtifactBindings
   readonly workflow: OutlineWorkflow
+  readonly revision: number // 每次写入递增，用于发现其他会话的修改
+  readonly lastWriterSessionId: string | null // 最近一次写入它的会话，面板写入时为 null
 }
 
 export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'

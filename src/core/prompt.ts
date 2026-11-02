@@ -20,6 +20,7 @@ export const FULL_GUIDE = `Vibe Learning 插件已安装，本会话已进入“
 - update_outline.tree 的节点结构以工具参数契约为准，不得自行添加扁平树字段、artifactId 或 Workflow 字段。
 - 开始课程前，先用 update_outline 落盘树，再创作 Lesson 工件（见下节），调用 update_outline_artifact_binding 绑定 artifact_id，最后显式调用 update_outline_workflow 进入 learning。
 - present_artifact、Run completed、save_feedback 都不会改变 Workflow。
+- 同一大纲可能同时在多个会话中学习，进度只以工作区中的大纲为准。快照提示大纲已被其他会话修改时，不要依据对话历史推断进度；写入大纲时若返回“已被修改”，先 get_outline 再决定。
 - 收到 completed 后批改并 save_feedback，再显式进入 qa。
 - 答疑结束后调用 update_outline_workflow：有下一课则直接进入 learning 并指定下一课程；没有下一课则 completed。工具会自行询问用户确认。
 
@@ -88,6 +89,9 @@ export function renderSnapshot(snapshot: LearningSnapshot): string {
     else {
         const outline = snapshot.outlines.find(item => item.id === snapshot.activeOutlineId)
         lines.push(`- 激活大纲：${outline?.title ?? snapshot.activeOutlineId}（${outline?.phase ?? '不可读取'}）`)
+
+        const stale = snapshot.staleOutline
+        if (stale !== undefined) lines.push(`- 注意：激活大纲在你上次查看后已被${stale.writerSessionId === null ? '学习面板' : `会话 ${stale.writerSessionId}`}修改（修订 ${stale.seenRevision} → ${stale.revision}）。对话历史里的进度可能已经过时，一律以本快照为准；修改大纲前先调用 get_outline。`)
     }
 
     if (snapshot.currentLesson !== null) lines.push(`- 当前课程：${snapshot.currentLesson.title}（${snapshot.currentLesson.phase}；lessonId: ${snapshot.currentLesson.id}）`)

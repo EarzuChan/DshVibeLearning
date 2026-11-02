@@ -12,6 +12,7 @@ import {findOutlineLesson, outlineArtifactIds} from '../core/outline.ts'
 import {artifactKindOf} from '../shared/artifacts.ts'
 import type {AbortRunRequest, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, LearningDataDto} from '../shared/api.ts'
 import {CORDIS_EFFECT_BACKEND_ROUTES, DVL_SERVER_ROUTE_PREFIX} from '../shared/constants.ts'
+import {ownerOutlineIdOf, renderDueReviewInstruction, renderPresentInstruction, resolveArtifactOwner, type PanelSessionContext} from '../core/panel-intent.ts'
 import type {NoteAccess} from '../shared/model.ts'
 import {getWorkspaceCwdOrNullByItsHashId, recordWorkspaceHashIdByGeneratingItFromItsCwd} from './workspace-hash-id-related.ts'
 
@@ -100,9 +101,11 @@ export function installLearningRoutes(ctx: Context, learning: LearningService): 
     const resolveCwd = (workspaceId: string): string | null => getWorkspaceCwdOrNullByItsHashId(ctx, workspaceId)
 
     // 学习面板的意图投递：目标会话（含前端刚新建的）由核心负责等待上线、继承模型与进入学习
-    const deliverIntent = async (body: {readonly sessionId?: unknown; readonly sourceSessionId?: unknown}, summary: string, instruction: string): Promise<{ok: true; sessionId: string}> => {
+    const deliverIntent = async (body: {readonly sessionId?: unknown; readonly sourceSessionId?: unknown; readonly outlineMode?: unknown}, summary: string, outlineId: string | null, build: (session: PanelSessionContext) => string): Promise<{ok: true; sessionId: string}> => {
         const sessionId = asString(body.sessionId)
-        await learning.deliverPanelIntent(sessionId, asString(body.sourceSessionId), summary, instruction)
+        const mode = body.outlineMode === 'switch' || body.outlineMode === 'keep' ? body.outlineMode : 'auto'
+
+        await learning.deliverPanelIntent(sessionId, asString(body.sourceSessionId), summary, outlineId === null ? null : {id: outlineId, mode}, build)
         return {ok: true, sessionId}
     }
 
@@ -289,19 +292,23 @@ export function installLearningRoutes(ctx: Context, learning: LearningService): 
             if (body.intent === 'start-due-review') {
                 const plan = await learning.reviewPlansFor(cwd).read(asString(body.planId))
                 if (plan === null) return sendJson(res, 404, {ok: false, error: '复习计划不存在'})
-                const instruction = `用户从学习面板确认开始复习计划 ${plan.id} 的到期复习。请调用 claim_review_plan_round 取得 active round，再生成全新的 Review Artifact，调用 update_review_plan_round_artifact_binding 绑定本期，再 present、批改、save_feedback，最后调用 update_review_plan 结算计划。`
-                return sendJson(res, 200, await deliverIntent(body, '开始到期复习', instruction))
+
+                const outline = await learning.readOutline(cwd, plan.outlineId)
+                return sendJson(res, 200, await deliverIntent(body, '开始到期复习', plan.outlineId, session => renderDueReviewInstruction(plan, outline, session)))
             }
 
-            if (body.intent !== 'present-existing') return sendJson(res, 400, {ok: false, error: 'In-band 意图无效'})
+            if (body.intent !== 'present-existing') return sendJson(res, 400, {ok: false, error: '会话内呈现的意图无效'})
             const kind = artifactKindOf(asString(body.category))
             const artifactId = asString(body.artifactId)
             if (kind === null || !isValidArtifactId(artifactId) || !await learning.artifactsFor(cwd).exists(kind, artifactId)) return sendJson(res, 404, {ok: false, error: '工件不存在'})
             const runId = body.runId === undefined ? undefined : asString(body.runId)
             if (runId !== undefined && (!isValidRunId(runId) || !await learning.runs.exists({cwd, kind, artifactId, runId}) || await learning.runs.outcome({cwd, kind, artifactId, runId}) !== null)) return sendJson(res, 409, {ok: false, error: '指定的 Run 不是 Active'})
             const title = await learning.artifactsFor(cwd).title(kind, artifactId)
-            const instruction = `用户要求 In-band 查看已有 ${kind} 工件「${title}」。请调用 present_artifact(kind='${kind}', path='${learning.filesFor(cwd).artifactHtml(kind, artifactId)}'${runId === undefined ? '' : `, run_id='${runId}'`})。若收到 completed，可按对话需要批改并 save_feedback；这是历史或已有工件，默认不得改变大纲 Workflow 或复习计划。`
-            return sendJson(res, 200, await deliverIntent(body, `查看工件「${title}」`, instruction))
+            const owner = resolveArtifactOwner(kind, artifactId, await learning.listOutlines(cwd), await learning.reviewPlansFor(cwd).list(), await learning.reviewPlansFor(cwd).temporaryManifest())
+            const runs = await learning.runs.list(kind, artifactId, cwd)
+            const artifactPath = learning.filesFor(cwd).artifactHtml(kind, artifactId)
+
+            return sendJson(res, 200, await deliverIntent(body, `呈现工件「${title}」`, ownerOutlineIdOf(owner), session => renderPresentInstruction({kind, title, path: artifactPath, ...(runId === undefined ? {} : {runId}), owner, runs, session})))
         }
 
         // Run 页面服务创建时冻结的副本，后续对工件的编辑不影响进行中的 Run

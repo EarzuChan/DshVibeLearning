@@ -55,7 +55,10 @@ export interface LearningWorkspaceDto {
   readonly isLearningWorkspace: boolean
 }
 
-export type InbandPresentRequest = {readonly intent: 'present-existing'; readonly workspaceId: string; readonly category: ArtifactCategory; readonly artifactId: string; readonly runId?: string; readonly sessionId: string; readonly sourceSessionId: string} | {readonly intent: 'start-due-review'; readonly workspaceId: string; readonly planId: string; readonly sessionId: string; readonly sourceSessionId: string}
+export type InbandPresentRequest = {readonly intent: 'present-existing'; readonly workspaceId: string; readonly category: ArtifactCategory; readonly artifactId: string; readonly runId?: string; readonly sessionId: string; readonly sourceSessionId: string; readonly outlineMode: PanelOutlineMode} | {readonly intent: 'start-due-review'; readonly workspaceId: string; readonly planId: string; readonly sessionId: string; readonly sourceSessionId: string; readonly outlineMode: PanelOutlineMode}
+
+// 目标会话激活大纲的处理：auto 仅在没有激活大纲时激活；switch 切换为所属大纲；keep 保持不变
+export type PanelOutlineMode = 'auto' | 'switch' | 'keep'
 
 export interface InbandPresentResult {
   readonly ok: boolean

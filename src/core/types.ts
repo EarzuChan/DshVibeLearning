@@ -63,6 +63,13 @@ export interface LearningSnapshot {
   readonly currentLesson: SnapshotLesson | null
   readonly dueReviews: readonly SnapshotReview[]
   readonly problem?: string
+  readonly staleOutline?: StaleOutlineNotice // 激活大纲在本会话上次查看后被其他会话改动
+}
+
+export interface StaleOutlineNotice {
+  readonly writerSessionId: string | null
+  readonly seenRevision: number
+  readonly revision: number
 }
 
 export function presentOutcomeOf(runId: string, outcome: RunOutcome): PresentOutcome {

@@ -358,6 +358,11 @@
   padding: 4px 8px;
 }
 
+.previewActions {
+  display: inline-flex;
+  gap: 4px;
+}
+
 .previewLabel {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;

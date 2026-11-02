@@ -5,18 +5,32 @@ import clsx from 'clsx'
 import {Button, IconRefreshOutlineMedium, Modal} from '@deepseek-ai/dsh-client-ui-primitives'
 import type {LearningViewProps} from './contract.ts'
 import type {ArtifactCategory} from '../shared/artifacts.ts'
-import type {LearningDataDto} from '../shared/api.ts'
+import type {LearningDataDto, PanelOutlineMode} from '../shared/api.ts'
 import type {ArtifactSummary, Outline, OutlineNode, ReviewPlan, ReviewPlanRound} from '../shared/model.ts'
 import css from './LearningView.module.css'
 
 type Tab = 'outlines' | 'reviews' | 'quizzes'
 type InbandTarget = {kind: 'artifact'; category: ArtifactCategory; artifactId: string; runId?: string} | {kind: 'due-review'; planId: string}
 
+// 会话内呈现对话框：先选会话；目标会话激活着别的大纲时再问怎么处理
+type InbandDialog = {stage: 'session'; target: InbandTarget} | {stage: 'outline'; target: InbandTarget; activeOutlineTitle: string; ownerOutlineTitle: string}
+
 interface ViewFace {
     t: LearningViewProps['t']
     api: LearningViewProps['api']
     onPreview: (category: ArtifactCategory, artifactId: string) => void
+    onRun: (category: ArtifactCategory, artifactId: string, runId: string) => void
     onInband: (category: ArtifactCategory, artifactId: string, runId?: string) => void
+}
+
+// 会话内呈现的目标归属哪个大纲：课程看绑定，复习看计划或临时期次，小测与游离工件无归属
+function ownerOutlineIdOf(data: LearningDataDto, target: InbandTarget): string | null {
+    if (target.kind === 'due-review') return data.reviewPlans.find(plan => plan.id === target.planId)?.outlineId ?? null
+    if (target.category === 'lessons') return data.outlines.find(outline => Object.values(outline.artifactBindings).includes(target.artifactId))?.id ?? null
+    if (target.category === 'quizzes') return null
+
+    const plan = data.reviewPlans.find(item => item.rounds.some(round => round.artifactId === target.artifactId))
+    return plan?.outlineId ?? data.temporaryReviews.rounds.find(round => round.artifactId === target.artifactId)?.outlineId ?? null
 }
 
 function flattenNodes(nodes: readonly OutlineNode[], depth = 0): Array<{node: OutlineNode; depth: number}> {
@@ -39,7 +53,7 @@ function artifactOf(artifacts: readonly ArtifactSummary[], artifactId?: string):
 }
 
 function ArtifactBlock({artifact, category, face, deletable = false}: {artifact: ArtifactSummary; category: ArtifactCategory; face: ViewFace; deletable?: boolean}) {
-    const {t, api, onPreview, onInband} = face
+    const {t, api, onPreview, onRun, onInband} = face
     const [creating, setCreating] = useState(false)
     const activeRuns = artifact.runs.filter(run => run.state === 'active')
     const hasInband = activeRuns.some(run => run.inBandSessionId !== undefined)
@@ -48,7 +62,7 @@ function ArtifactBlock({artifact, category, face, deletable = false}: {artifact:
         setCreating(true)
         try {
             const descriptor = await api.createDirectRun(category, artifact.artifactId)
-            window.open(descriptor.url, '_blank', 'noopener')
+            onRun(category, artifact.artifactId, descriptor.runId)
         } finally {
             setCreating(false)
         }
@@ -64,7 +78,7 @@ function ArtifactBlock({artifact, category, face, deletable = false}: {artifact:
                 </div>
                 <div className={css.artifactActions}>
                     <Button size="sm" variant="outline" onClick={() => onPreview(category, artifact.artifactId)}>{t('artifact.preview')}</Button>
-                    {activeRuns.length === 0 && <Button size="sm" variant="outline" disabled={creating} onClick={() => void createRun()}>{creating ? t('state.loading') : '新作答'}</Button>}
+                    {activeRuns.length === 0 && <Button size="sm" variant="outline" disabled={creating} onClick={() => void createRun()}>{creating ? t('state.loading') : '直接作答'}</Button>}
                     {activeRuns.length === 0 && <Button size="sm" variant="primary" onClick={() => onInband(category, artifact.artifactId)}>{t('artifact.inband')}</Button>}
                     {deletable && <Button size="sm" variant="ghost" onClick={() => { if (window.confirm(`确定删除工件「${artifact.title}」及其全部作答吗？`)) void api.deleteArtifact(category, artifact.artifactId) }}>删除</Button>}
                 </div>
@@ -78,8 +92,8 @@ function ArtifactBlock({artifact, category, face, deletable = false}: {artifact:
                             <span className={css.metaBadge}>{run.state === 'active' ? '进行中' : run.state === 'completed' ? '已完成' : '已放弃'}</span>
                             <span className={css.outlineMeta}>{new Date(run.modifiedAt).toLocaleString()}</span>
                             {run.hasFeedback && <span className={css.metaBadge}>{t('artifact.run.feedback')}</span>}
-                            {run.inBandSessionId !== undefined && <span className={css.metaBadge}>In-band · {run.inBandSessionId.slice(0, 8)}</span>}
-                            {run.state === 'active' && <Button size="sm" variant="outline" onClick={() => api.openRun(category, artifact.artifactId, run.runId)}>继续作答（在新标签页打开）</Button>}
+                            {run.inBandSessionId !== undefined && <span className={css.metaBadge}>会话内 · {api.sessionTitle(run.inBandSessionId) ?? run.inBandSessionId.slice(0, 8)}</span>}
+                            {run.state === 'active' && run.inBandSessionId === undefined && <Button size="sm" variant="outline" onClick={() => onRun(category, artifact.artifactId, run.runId)}>继续作答</Button>}
                             {run.state === 'active' && run.inBandSessionId === undefined && !hasInband && <Button size="sm" variant="primary" onClick={() => onInband(category, artifact.artifactId, run.runId)}>交给会话来继续</Button>}
                             {run.state === 'active' && <Button size="sm" variant="ghost" onClick={() => void api.abortRun(category, artifact.artifactId, run.runId)}>放弃</Button>}
                         </li>
@@ -179,7 +193,8 @@ export function LearningView(props: LearningViewProps) {
     const tab = useStore(state => state.tab)
     const preview = useStore(state => state.preview)
     const [refreshing, setRefreshing] = useState(false)
-    const [inbandTarget, setInbandTarget] = useState<InbandTarget | null>(null)
+    const [dialog, setDialog] = useState<InbandDialog | null>(null)
+    const setInbandTarget = (target: InbandTarget | null): void => setDialog(target === null ? null : {stage: 'session', target})
     const allArtifacts = learning.data === null ? [] : [...learning.data.lessons, ...learning.data.reviews, ...learning.data.quizzes]
     const currentSessionHasInband = allArtifacts.some(artifact => artifact.runs.some(run => run.inBandSessionId === String(sessionId)))
 
@@ -192,19 +207,44 @@ export function LearningView(props: LearningViewProps) {
         }
     }, [api])
 
-    const onPreview = (category: ArtifactCategory, artifactId: string): void => actions.setPreview(preview?.category === category && preview.artifactId === artifactId ? null : {category, artifactId})
-    const face: ViewFace = {t, api, onPreview, onInband: (category, artifactId, runId) => setInbandTarget({kind: 'artifact', category, artifactId, ...(runId === undefined ? {} : {runId})})}
+    const onPreview = (category: ArtifactCategory, artifactId: string): void => actions.setPreview(preview?.category === category && preview.artifactId === artifactId && preview.runId === undefined ? null : {category, artifactId})
+    const onRun = (category: ArtifactCategory, artifactId: string, runId: string): void => actions.setPreview({category, artifactId, runId})
+    const face: ViewFace = {t, api, onPreview, onRun, onInband: (category, artifactId, runId) => setInbandTarget({kind: 'artifact', category, artifactId, ...(runId === undefined ? {} : {runId})})}
 
-    const confirmInband = async (targetSessionId: string): Promise<void> => {
-        if (inbandTarget === null) return
+    const deliver = async (target: InbandTarget, targetSessionId: string, mode: PanelOutlineMode): Promise<void> => {
+        setDialog(null)
 
-        try {
-            if (inbandTarget.kind === 'artifact') await api.inbandPresentExisting(inbandTarget.category, inbandTarget.artifactId, targetSessionId, inbandTarget.runId)
-            else await api.startDueReview(inbandTarget.planId, targetSessionId)
-        } finally {
-            setInbandTarget(null)
-        }
+        if (target.kind === 'artifact') await api.inbandPresentExisting(target.category, target.artifactId, targetSessionId, mode, target.runId)
+        else await api.startDueReview(target.planId, targetSessionId, mode)
     }
+
+    // 选了当前会话且它激活着别的大纲时，先问用户怎么处理；其余情况由后端在没有激活大纲时自动激活
+    const chooseSession = (targetSessionId: string): void => {
+        if (dialog === null || learning.data === null) return
+
+        const ownerOutlineId = ownerOutlineIdOf(learning.data, dialog.target)
+        const titleOf = (id: string): string => learning.data?.outlines.find(outline => outline.id === id)?.title ?? id
+        const mismatched = targetSessionId === String(sessionId) && ownerOutlineId !== null && projection.activeOutlineId !== null && projection.activeOutlineId !== ownerOutlineId
+
+        if (mismatched) setDialog({stage: 'outline', target: dialog.target, activeOutlineTitle: titleOf(projection.activeOutlineId as string), ownerOutlineTitle: titleOf(ownerOutlineId)})
+        else void deliver(dialog.target, targetSessionId, 'auto')
+    }
+
+    // 最近推进所属大纲的会话，作为推荐项
+    const recommended = useMemo(() => {
+        if (dialog === null || learning.data === null) return null
+
+        const ownerOutlineId = ownerOutlineIdOf(learning.data, dialog.target)
+        const writer = learning.data.outlines.find(outline => outline.id === ownerOutlineId)?.lastWriterSessionId ?? null
+        if (writer === null || writer === String(sessionId)) return null
+
+        const title = api.sessionTitle(writer)
+        return title === null ? null : {sessionId: writer, title}
+    }, [dialog, learning.data, sessionId, api])
+
+    const paneRun = preview?.runId === undefined ? null : allArtifacts.find(artifact => artifact.artifactId === preview.artifactId)?.runs.find(run => run.runId === preview.runId) ?? null
+    const paneUrl = preview === null ? null : preview.runId === undefined ? api.artifactUrl(preview.category, preview.artifactId) : api.runUrl(preview.category, preview.artifactId, preview.runId)
+    const paneLabel = preview?.runId === undefined ? '只读预览' : paneRun?.state === 'active' ? '作答中' : '本次作答已结束'
 
     return (
         <div className={css.frame}>
@@ -219,9 +259,22 @@ export function LearningView(props: LearningViewProps) {
                 {learning.phase === 'error' ? <div className={css.status}>{learning.error ?? t('state.error')}</div> : learning.phase === 'idle' ? <div className={css.status}>{t('state.idle')}</div> : learning.data === null ? <div className={css.status}>{t('state.loading')}</div> : tab === 'outlines' ? <OutlinesTab state={learning.data} activeOutlineId={projection.activeOutlineId} face={face}/> : tab === 'reviews' ? <ReviewsTab state={learning.data} face={face} onStart={planId => setInbandTarget({kind: 'due-review', planId})}/> : <div className={css.section}>{learning.data.quizzes.length === 0 && <div className={css.empty}>暂无小测工件</div>}{learning.data.quizzes.map(artifact => <ArtifactBlock key={artifact.artifactId} artifact={artifact} category="quizzes" face={face} deletable/>)}</div>}
             </div>
 
-            {preview !== null && <div className={css.preview}><div className={css.previewHeader}><span className={css.previewLabel}>只读预览</span><Button size="sm" variant="ghost" onClick={() => actions.setPreview(null)}>{t('artifact.previewClose')}</Button></div><iframe className={css.previewFrame} src={api.artifactUrl(preview.category, preview.artifactId)} title={t('artifact.preview')} sandbox="allow-scripts allow-forms allow-modals allow-popups" allow="clipboard-write"/></div>}
+            {preview !== null && paneUrl !== null && (
+                <div className={css.preview}>
+                    <div className={css.previewHeader}>
+                        <span className={css.previewLabel}>{paneLabel}</span>
+                        <span className={css.previewActions}>
+                            <Button size="sm" variant="ghost" disabled={preview.runId !== undefined && paneRun?.state !== 'active'} onClick={() => window.open(paneUrl, '_blank', 'noopener')}>在外部打开</Button>
+                            <Button size="sm" variant="ghost" onClick={() => actions.setPreview(null)}>{t('artifact.previewClose')}</Button>
+                        </span>
+                    </div>
+                    <iframe key={paneUrl} className={css.previewFrame} src={paneUrl} title={paneLabel} sandbox="allow-scripts allow-forms allow-modals allow-popups" allow="clipboard-write"/>
+                </div>
+            )}
 
-            <Modal open={inbandTarget !== null} onClose={() => setInbandTarget(null)} closeLabel={t('notes.cancel')} title={t('artifact.inband.dialog.title')} footer={<><Button variant="outline" onClick={() => setInbandTarget(null)}>{t('notes.cancel')}</Button><Button variant="primary" disabled={currentSessionHasInband} onClick={() => void confirmInband(String(sessionId))}>{t('artifact.inband.current')}</Button><Button variant="outline" onClick={() => void confirmInband('')}>{t('artifact.inband.new')}</Button></>}><p className={css.inbandHint}>{currentSessionHasInband ? '当前会话已有 In-band 呈现，可改用新会话' : '选择承接本次模型参与流程的会话'}</p></Modal>
+            <Modal open={dialog?.stage === 'session'} onClose={() => setDialog(null)} closeLabel={t('notes.cancel')} title={t('artifact.inband.dialog.title')} footer={<><Button variant="outline" onClick={() => setDialog(null)}>{t('notes.cancel')}</Button>{recommended !== null && <Button variant="outline" onClick={() => chooseSession(recommended.sessionId)}>{`推荐：${recommended.title}`}</Button>}<Button variant="primary" disabled={currentSessionHasInband} onClick={() => chooseSession(String(sessionId))}>{t('artifact.inband.current')}</Button><Button variant="outline" onClick={() => chooseSession('')}>{t('artifact.inband.new')}</Button></>}><p className={css.inbandHint}>{currentSessionHasInband ? '当前会话已有正在进行的会话内呈现，可改用其他会话' : '选择由哪个会话的模型来呈现、批改并跟进'}{recommended !== null && `。「${recommended.title}」最近推进过所属大纲`}</p></Modal>
+
+            {dialog?.stage === 'outline' && <Modal open onClose={() => setDialog(null)} closeLabel={t('notes.cancel')} title="当前会话激活着另一个大纲" footer={<><Button variant="outline" onClick={() => setDialog(null)}>取消这次会话内呈现</Button><Button variant="outline" onClick={() => void deliver(dialog.target, String(sessionId), 'keep')}>{dialog.target.kind === 'artifact' ? '仅回看（不切换）' : '不切换，直接开始'}</Button><Button variant="primary" onClick={() => void deliver(dialog.target, String(sessionId), 'switch')}>{dialog.target.kind === 'artifact' ? '切换并呈现' : '切换大纲并开始复习'}</Button></>}><p className={css.inbandHint}>{`当前会话激活的是「${dialog.activeOutlineTitle}」，而${dialog.target.kind === 'artifact' ? '该工件' : '该复习'}属于「${dialog.ownerOutlineTitle}」。切换后模型会按「${dialog.ownerOutlineTitle}」的进度跟进；不切换则${dialog.target.kind === 'artifact' ? '只作回看，不改变学习进度' : '照常复习，但会话的激活大纲保持不变'}。`}</p></Modal>}
         </div>
     )
 }

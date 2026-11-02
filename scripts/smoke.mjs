@@ -9,6 +9,7 @@ import {Context} from '@deepseek-ai/cordis'
 import LearningService from '../lib/core/index.js'
 import {dvlLearningProjection} from '../lib/core/projection.js'
 import {renderSnapshot} from '../lib/core/prompt.js'
+import {renderPresentInstruction, resolveArtifactOwner} from '../lib/core/panel-intent.js'
 import {installLearningRoutes} from '../lib/the-so-called-backend/index.js'
 import {recordWorkspaceHashIdByGeneratingItFromItsCwd} from '../lib/the-so-called-backend/workspace-hash-id-related.js'
 import {installLearningTools} from '../lib/tool/index.js'
@@ -94,6 +95,53 @@ await check('Run：别的进程留下的未终结 Run 读取时判为 aborted', 
     const outcome = await learning.runs.outcome(stale)
     assert.equal(outcome?.state, 'aborted')
     assert.ok(JSON.parse(await readFile(learning.filesFor(ws).outcomeFile('lesson', artifactId, stale.runId), 'utf8')).state === 'aborted')
+})
+
+// ---大纲：多会话修订与会话内呈现的情境---
+
+const sessionA = {id: 'session-a'}
+const sessionB = {id: 'session-b'}
+const draft = await learning.normalizeOutline(ws, {title: '终端入门', tree: [{kind: 'lesson', title: '第一课'}, {kind: 'lesson', title: '第二课'}]}, null)
+const [lesson1, lesson2] = draft.tree.map(node => node.id)
+const savedByA = await learning.saveOutline(ws, draft, sessionA)
+
+await check('大纲：写入递增修订号并记下写入会话', () => {
+    assert.equal(savedByA.revision, 1)
+    assert.equal(savedByA.lastWriterSessionId, 'session-a')
+})
+
+learning.markOutlineSeen(sessionB, ws, savedByA)
+const advancedByB = await learning.updateOutlineWorkflow(ws, draft.id, 'learning', lesson1, sessionB)
+
+await check('大纲：其他会话推进后，旧视角的写入被拒绝并要求先 get_outline', async () => {
+    assert.equal(advancedByB.revision, 2)
+    await assert.rejects(learning.updateOutlineWorkflow(ws, draft.id, 'qa', null, sessionA), error => error.message.includes('get_outline') && error.message.includes('session-b'))
+
+    learning.markOutlineSeen(sessionA, ws, advancedByB)
+    assert.equal((await learning.updateOutlineWorkflow(ws, draft.id, 'qa', null, sessionA)).revision, 3)
+})
+
+await check('快照：激活大纲被其他会话修改时提示以快照为准', () => {
+    const text = renderSnapshot({workspaceId: 'w', learningDirExists: true, activeOutlineId: draft.id, outlines: [{id: draft.id, title: '终端入门', phase: 'qa', dueReviewCount: 0}], currentLesson: null, dueReviews: [], staleOutline: {writerSessionId: 'session-b', seenRevision: 1, revision: 3}})
+    assert.ok(text.includes('会话 session-b') && text.includes('以本快照为准'))
+})
+
+await check('会话内呈现：按归属与会话大纲给出正常流程或回看', async () => {
+    const lessonArtifact = await learning.allocateArtifact(ws, 'lesson')
+    await writeFile(lessonArtifact.path, HTML_V1)
+    await learning.updateOutlineWorkflow(ws, draft.id, 'learning', lesson2, null)
+    await learning.updateOutlineArtifactBinding(ws, draft.id, lesson2, lessonArtifact.artifactId, null)
+
+    const owner = resolveArtifactOwner('lesson', lessonArtifact.artifactId, await learning.listOutlines(ws), [], {rounds: []})
+    assert.equal(owner.role, 'lesson')
+    assert.equal(owner.lessonId, lesson2)
+
+    const base = {kind: 'lesson', title: '第二课', path: lessonArtifact.path, owner, runs: []}
+    const current = renderPresentInstruction({...base, session: {activeOutlineId: draft.id, activated: true}})
+    assert.ok(current.includes('第 2 课「第二课」') && current.includes('正常课程流程') && current.includes('已为本次呈现'))
+
+    const elsewhere = renderPresentInstruction({...base, session: {activeOutlineId: 'other-outline', activated: false}})
+    assert.ok(elsewhere.includes('只是回看') && !elsewhere.includes('正常课程流程'))
 })
 
 // ---HTTP 路由：用替身 webServer 挂在真实 http 服务上---

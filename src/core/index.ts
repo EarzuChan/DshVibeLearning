@@ -26,14 +26,15 @@ import {isValidArtifactId, LearningFiles} from './files.ts'
 import {generateWorkspaceHashIdOf, isSafeSegment} from '../util/identifiers.ts'
 import {recordLearningDelegateToSession, recordLearningEnteredToSession, recordLearningOutlineChangeToSession} from './learning-event.ts'
 import {NotesStore} from './notes.ts'
-import {findOutlineLesson, outlineArtifactIds, OutlineStore, type OutlineInput} from './outline.ts'
+import {findOutlineLesson, outlineArtifactIds, OutlineStore, type OutlineInput, type OutlineWriter} from './outline.ts'
 import {InBandPresentationRegistry} from './presentation.ts'
 import {InteractionService} from './interaction.ts'
 import {dvlLearningProjection} from './projection.ts'
+import type {PanelOutlineMode, PanelSessionContext} from './panel-intent.ts'
 import {AUTHOR_GUIDE, BOOT_LINE, FULL_GUIDE, renderSnapshot} from './prompt.ts'
 import {ReviewPlanStore, type PreparedReviewPlan, type ReviewPlanCreationInput} from './review-plan.ts'
 import {RunStore} from './run.ts'
-import type {ArtifactRef, ArtifactRunDescriptor, LearningSnapshot, PresentOutcome, RunRef} from './types.ts'
+import type {ArtifactRef, ArtifactRunDescriptor, LearningSnapshot, PresentOutcome, RunRef, StaleOutlineNotice} from './types.ts'
 import {presentOutcomeOf} from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -87,6 +88,7 @@ export class LearningService extends Service {
 
     private projection: ProjectionHandle<SessionDvlLearningState> | undefined
     private readonly previewSecret = randomBytes(32) // 每个进程一份，用于签发只读预览凭证
+    private readonly seenOutlineRevisions = new Map<string, number>() // 会话最近看到的大纲修订号，仅在本进程内有效
 
     // 外围能力仍各自实现，LearningService 只统一拥有其安装与卸载生命周期
     private installEssentialCapabilities(ctx: Context): void {
@@ -159,7 +161,8 @@ export class LearningService extends Service {
             const cwd = this.getCurrentSessionCwd(agent)
 
             const snapshot = cwd === null ? {workspaceId: '', learningDirExists: false, activeOutlineId: state.activeOutlineId, outlines: [], currentLesson: null, dueReviews: [], problem: '学习会话没有工作区目录'} satisfies LearningSnapshot : await this.snapshotLearningWorkspaceState(cwd, state.activeOutlineId)
-            const text = renderSnapshot(snapshot)
+            const stale = cwd === null || state.activeOutlineId === null ? undefined : await this.staleOutlineOf(agent, cwd, state.activeOutlineId)
+            const text = renderSnapshot(stale === undefined ? snapshot : {...snapshot, staleOutline: stale})
 
             return {...result, contexts: [...result.contexts, {name: CORDIS_SECTION_SNAPSHOT, text}]}
         }, {prepend: true})
@@ -233,7 +236,8 @@ export class LearningService extends Service {
     }
 
     // 学习面板发起的意图投递：目标会话须在线；新建的会话会继承发起方会话的模型并先进入学习
-    async deliverPanelIntent(sessionId: string, sourceSessionId: string, summary: string, instruction: string): Promise<void> {
+    // outline 为意图所属的大纲：按 mode 决定是否先为目标会话激活它，再据投递后的会话情况生成指令
+    async deliverPanelIntent(sessionId: string, sourceSessionId: string, summary: string, outline: {readonly id: string; readonly mode: PanelOutlineMode} | null, build: (session: PanelSessionContext) => string | Promise<string>): Promise<void> {
         const agents = this.ctx.get('agents')
         if (sessionId.length === 0) throw new Error('必须指定目标会话')
 
@@ -248,6 +252,12 @@ export class LearningService extends Service {
         const source = sourceSessionId.length === 0 || sourceSessionId === sessionId ? undefined : agents?.get(brandSessionId(sourceSessionId))
         const inherited = source?.model.current()
         if (inherited !== undefined && agent.model.current() === undefined) agent.model.select(inherited)
+
+        const active = this.getCurrentSessionDvlLearningState(agent).activeOutlineId
+        const activate = outline !== null && active !== outline.id && (active === null ? outline.mode !== 'keep' : outline.mode === 'switch')
+        if (activate) await this.changeCurrentSessionOutline(agent, outline.id)
+
+        const instruction = await build({activeOutlineId: activate ? outline.id : active, activated: activate})
 
         if (this.getCurrentSessionDvlLearningState(agent).entered) this.notify(agent, summary, instruction)
         else await this.enterVibeLearning(agent, instruction)
@@ -284,22 +294,58 @@ export class LearningService extends Service {
         return this.outlinesFor(cwd).normalize(input, outlineId)
     }
 
-    async saveOutline(cwd: string, outline: Outline): Promise<void> {
-        for (const artifactId of outlineArtifactIds(outline)) if (!await this.artifactsFor(cwd).exists('lesson', artifactId)) throw new Error(`大纲引用的课程工件不存在：${artifactId}`)
+    // ---大纲修订：会话看到过哪一版，写入时据此发现其他会话的改动---
 
-        await this.outlinesFor(cwd).write(outline)
-
-        this.publishLearning(cwd)
+    private seenKey(agent: Agent, cwd: string, outlineId: string): string {
+        return `${String(agent.id)}\u0000${cwd}\u0000${outlineId}`
     }
 
-    async updateOutlineArtifactBinding(cwd: string, outlineId: string, lessonId: string, artifactId: string | null): Promise<Outline> {
+    markOutlineSeen(agent: Agent, cwd: string, outline: Outline): void {
+        this.seenOutlineRevisions.set(this.seenKey(agent, cwd, outline.id), outline.revision)
+    }
+
+    seenOutlineRevision(agent: Agent, cwd: string, outlineId: string): number | undefined {
+        return this.seenOutlineRevisions.get(this.seenKey(agent, cwd, outlineId))
+    }
+
+    // 会话写入时校验它看到的修订号；面板写入不校验
+    private writerOf(agent: Agent | null, cwd: string, outlineId: string): OutlineWriter {
+        if (agent === null) return {sessionId: null}
+
+        const expectedRevision = this.seenOutlineRevision(agent, cwd, outlineId)
+        return {sessionId: String(agent.id), ...(expectedRevision === undefined ? {} : {expectedRevision})}
+    }
+
+    // 激活大纲是否在本会话上次查看后被别处改动；首次见到时只记下，不算过时。过时状态保留到本会话 get_outline 或自己写入为止
+    private async staleOutlineOf(agent: Agent, cwd: string, outlineId: string): Promise<StaleOutlineNotice | undefined> {
+        const outline = await this.outlinesFor(cwd).read(outlineId).catch(() => null)
+        if (outline === null) return undefined
+
+        const seen = this.seenOutlineRevision(agent, cwd, outlineId)
+        if (seen === undefined || outline.lastWriterSessionId === String(agent.id)) {
+            this.markOutlineSeen(agent, cwd, outline)
+            return undefined
+        }
+
+        return outline.revision > seen ? {writerSessionId: outline.lastWriterSessionId, seenRevision: seen, revision: outline.revision} : undefined
+    }
+
+    private afterOutlineWrite(agent: Agent | null, cwd: string, outline: Outline): Outline {
+        if (agent !== null) this.markOutlineSeen(agent, cwd, outline)
+        this.publishLearning(cwd)
+        return outline
+    }
+
+    async saveOutline(cwd: string, outline: Outline, writer: Agent | null): Promise<Outline> {
+        for (const artifactId of outlineArtifactIds(outline)) if (!await this.artifactsFor(cwd).exists('lesson', artifactId)) throw new Error(`大纲引用的课程工件不存在：${artifactId}`)
+
+        return this.afterOutlineWrite(writer, cwd, await this.outlinesFor(cwd).write(outline, this.writerOf(writer, cwd, outline.id)))
+    }
+
+    async updateOutlineArtifactBinding(cwd: string, outlineId: string, lessonId: string, artifactId: string | null, writer: Agent | null): Promise<Outline> {
         if (artifactId !== null && !await this.artifactsFor(cwd).exists('lesson', artifactId)) throw new Error(`课程工件不存在：${artifactId}`)
 
-        const outline = await this.outlinesFor(cwd).updateArtifactBinding(outlineId, lessonId, artifactId)
-
-        this.publishLearning(cwd)
-
-        return outline
+        return this.afterOutlineWrite(writer, cwd, await this.outlinesFor(cwd).updateArtifactBinding(outlineId, lessonId, artifactId, this.writerOf(writer, cwd, outlineId)))
     }
 
     // 若无活跃Run->删：本身、连带的RP、只挂本的课程工件、只挂本RP的复习工件
@@ -361,12 +407,8 @@ export class LearningService extends Service {
         this.publishLearning(cwd)
     }
 
-    async updateOutlineWorkflow(cwd: string, id: string, phase: OutlinePhase, currentLessonId: string | null): Promise<Outline> {
-        const outline = await this.outlinesFor(cwd).transition(id, phase, currentLessonId)
-
-        this.publishLearning(cwd)
-
-        return outline
+    async updateOutlineWorkflow(cwd: string, id: string, phase: OutlinePhase, currentLessonId: string | null, writer: Agent | null): Promise<Outline> {
+        return this.afterOutlineWrite(writer, cwd, await this.outlinesFor(cwd).transition(id, phase, currentLessonId, this.writerOf(writer, cwd, id)))
     }
 
     // ---复习计划---

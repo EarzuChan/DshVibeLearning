@@ -10,6 +10,40 @@ export interface OutlineInput {
     readonly tree: readonly OutlineNode[]
 }
 
+// 写入方：发起写入的会话，以及它最近看到的修订号（undefined 表示不校验）
+export interface OutlineWriter {
+    readonly sessionId: string | null
+    readonly expectedRevision?: number
+}
+
+// 大纲在调用方看到之后已被改动
+export class OutlineConflictError extends Error {
+    constructor(readonly outline: Outline, expectedRevision: number) {
+        super(`大纲「${outline.title}」已被${outline.lastWriterSessionId === null ? '学习面板' : `会话 ${outline.lastWriterSessionId}`}修改（你看到的是修订 ${expectedRevision}，当前为修订 ${outline.revision}）。请先调用 get_outline 了解最新状态再决定`)
+        this.name = 'OutlineConflictError'
+    }
+}
+
+// 同一大纲文件的读改写串行执行，避免并发会话互相覆盖
+const outlineLocks = new Map<string, Promise<unknown>>()
+
+async function withOutlineLock<T>(file: string, task: () => Promise<T>): Promise<T> {
+    const previous = outlineLocks.get(file) ?? Promise.resolve()
+    const current = previous.catch(() => undefined).then(task)
+    outlineLocks.set(file, current)
+
+    try {
+        return await current
+    } finally {
+        if (outlineLocks.get(file) === current) outlineLocks.delete(file)
+    }
+}
+
+// 早期文件没有修订字段，读取时补默认值
+function withRevision(outline: Outline): Outline {
+    return {...outline, revision: typeof outline.revision === 'number' ? outline.revision : 0, lastWriterSessionId: outline.lastWriterSessionId ?? null}
+}
+
 function visitNodes(nodes: readonly OutlineNode[], visit: (node: OutlineNode) => void): void {
     for (const node of nodes) {
         visit(node)
@@ -73,8 +107,10 @@ export class OutlineStore {
 
     async read(id: string): Promise<Outline | null> {
         const outline = await readJson<Outline>(this.files.outlineFile(id))
-        if (outline !== null) confirmOutline(outline)
-        return outline
+        if (outline === null) return null
+
+        confirmOutline(outline)
+        return withRevision(outline)
     }
 
     async list(): Promise<Outline[]> {
@@ -83,7 +119,7 @@ export class OutlineStore {
             const outline = await readJson<Outline>(`${this.files.outlinesDir}/${name}`)
             if (outline === null) continue
             confirmOutline(outline)
-            outlines.push(outline)
+            outlines.push(withRevision(outline))
         }
 
         return outlines.sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'))
@@ -94,36 +130,57 @@ export class OutlineStore {
         const previous = outlineId === null ? null : await this.read(outlineId)
 
         if (outlineId !== null && previous === null) throw new Error(`纲目不存在：${outlineId}`)
-        const outline: Outline = {id: outlineId ?? randomUUID(), title: input.title.trim(), tree: input.tree.map(normalizeNode), artifactBindings: previous?.artifactBindings ?? {}, workflow: previous?.workflow ?? {phase: 'not-started', currentLessonId: null, completedLessonIds: []}}
+        const outline: Outline = {id: outlineId ?? randomUUID(), title: input.title.trim(), tree: input.tree.map(normalizeNode), artifactBindings: previous?.artifactBindings ?? {}, workflow: previous?.workflow ?? {phase: 'not-started', currentLessonId: null, completedLessonIds: []}, revision: previous?.revision ?? 0, lastWriterSessionId: previous?.lastWriterSessionId ?? null}
 
         confirmOutline(outline)
 
         return outline
     }
 
-    async write(outline: Outline): Promise<void> {
-        confirmOutline(outline)
-        await writeJson(this.files.outlineFile(outline.id), outline)
+    // 整体写入：校验修订号后递增并记下写入会话
+    async write(outline: Outline, writer: OutlineWriter): Promise<Outline> {
+        return this.mutate(outline.id, writer, current => {
+            if (current === null && writer.expectedRevision !== undefined) throw new Error(`纲目不存在：${outline.id}`)
+            return outline
+        }, true)
     }
 
-    async updateArtifactBinding(outlineId: string, lessonId: string, artifactId: string | null): Promise<Outline> {
-        const outline = await this.read(outlineId)
-        if (outline === null) throw new Error(`纲目不存在：${outlineId}`)
+    // 读改写的公共骨架：串行、校验修订号、递增并落盘
+    private async mutate(id: string, writer: OutlineWriter, change: (current: Outline | null) => Outline, allowMissing = false): Promise<Outline> {
+        const file = this.files.outlineFile(id)
+
+        return withOutlineLock(file, async () => {
+            const current = await this.read(id)
+            if (current === null && !allowMissing) throw new Error(`纲目不存在：${id}`)
+            if (current !== null && writer.expectedRevision !== undefined && current.revision !== writer.expectedRevision) throw new OutlineConflictError(current, writer.expectedRevision)
+
+            const updated: Outline = {...change(current), revision: (current?.revision ?? 0) + 1, lastWriterSessionId: writer.sessionId}
+            confirmOutline(updated)
+
+            await writeJson(file, updated)
+            return updated
+        })
+    }
+
+    async updateArtifactBinding(outlineId: string, lessonId: string, artifactId: string | null, writer: OutlineWriter): Promise<Outline> {
+        return this.mutate(outlineId, writer, current => this.bindArtifact(current as Outline, lessonId, artifactId))
+    }
+
+    private bindArtifact(outline: Outline, lessonId: string, artifactId: string | null): Outline {
         if (findOutlineLesson(outline, lessonId)?.kind !== 'lesson') throw new Error(`课程不存在：${lessonId}`)
 
         const artifactBindings = {...outline.artifactBindings}
         if (artifactId === null) delete artifactBindings[lessonId]
         else artifactBindings[lessonId] = artifactId
-        const updated = {...outline, artifactBindings}
-        confirmOutline(updated)
-        await this.write(updated)
-        return updated
+
+        return {...outline, artifactBindings}
     }
 
-    async transition(id: string, phase: OutlinePhase, currentLessonId: string | null): Promise<Outline> {
-        const outline = await this.read(id)
-        if (outline === null) throw new Error(`纲目不存在：${id}`)
+    async transition(id: string, phase: OutlinePhase, currentLessonId: string | null, writer: OutlineWriter): Promise<Outline> {
+        return this.mutate(id, writer, current => this.nextWorkflow(current as Outline, phase, currentLessonId))
+    }
 
+    private nextWorkflow(outline: Outline, phase: OutlinePhase, currentLessonId: string | null): Outline {
         const current = outline.workflow
         const completed = new Set(current.completedLessonIds)
 
@@ -141,13 +198,7 @@ export class OutlineStore {
         } else if (current.phase !== 'not-started') throw new Error('只能在初始状态保持 not-started')
 
         const workflow: OutlineWorkflow = {phase, currentLessonId, completedLessonIds: [...completed]}
-        const updated = {...outline, workflow}
-
-        confirmOutline(updated)
-
-        await this.write(updated)
-
-        return updated
+        return {...outline, workflow}
     }
 
     async delete(id: string): Promise<void> {

@@ -9,7 +9,7 @@ export type {LearningDomain, NotesDomain, WorkspaceDomain} from './state.ts'
 // DVL 共享观看状态
 export type DvlViewState = {
   tab: 'outlines' | 'reviews' | 'quizzes' // 学习视图当前子 tab
-  preview: {category: ArtifactCategory; artifactId: string} | null // 当前内联预览目标，null 表示不显示预览
+  preview: {category: ArtifactCategory; artifactId: string; runId?: string} | null // 当前窗格目标：带 runId 时为作答，否则为只读预览；null 表示不显示
 }
 
 // DVL 共享观看状态操作

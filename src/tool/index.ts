@@ -153,7 +153,10 @@ export function installLearningTools(ctx: Context, learning: LearningService): (
             const agent = requireAgent(exec)
             try {
                 const outline = await learning.readOutline(requireCwd(agent), args.outline_id)
-                return outline === null ? {outcome: 'not-found' as const} : {outcome: 'found' as const, outline: outline as unknown as Record<string, JsonValue>}
+                if (outline === null) return {outcome: 'not-found' as const}
+
+                learning.markOutlineSeen(agent, requireCwd(agent), outline)
+                return {outcome: 'found' as const, outline: outline as unknown as Record<string, JsonValue>}
             } catch (error: unknown) {
                 return {outcome: 'error' as const, detail: errorText(error)}
             }
@@ -178,8 +181,8 @@ export function installLearningTools(ctx: Context, learning: LearningService): (
                 const answer = await confirmWrite(learning, agent, args.outline_id === null ? `新建大纲「${args.title}」？` : `更新大纲「${args.title}」？`, outline.tree, exec.signal)
                 if (!answer.confirmed) return {outcome: 'cancelled' as const, ...(answer.custom === undefined ? {} : {detail: answer.custom})}
 
-                await learning.saveOutline(cwd, outline)
-                return {outcome: 'confirmed' as const, outline: outline as unknown as Record<string, JsonValue>}
+                const saved = await learning.saveOutline(cwd, outline, agent)
+                return {outcome: 'confirmed' as const, outline: saved as unknown as Record<string, JsonValue>}
             } catch (error: unknown) {
                 return {outcome: 'error' as const, detail: errorText(error)}
             }
@@ -201,7 +204,7 @@ export function installLearningTools(ctx: Context, learning: LearningService): (
                 if (outline === null) return {outcome: 'error' as const, detail: `大纲不存在：${args.outline_id}`}
                 const answer = await confirmWrite(learning, agent, args.artifact_id === null ? `解除课程「${args.lesson_id}」的工件绑定？` : `为课程「${args.lesson_id}」绑定工件？`, {outlineId: args.outline_id, lessonId: args.lesson_id, artifactId: args.artifact_id}, exec.signal)
                 if (!answer.confirmed) return {outcome: 'cancelled' as const, ...(answer.custom === undefined ? {} : {detail: answer.custom})}
-                const updated = await learning.updateOutlineArtifactBinding(cwd, args.outline_id, args.lesson_id, args.artifact_id)
+                const updated = await learning.updateOutlineArtifactBinding(cwd, args.outline_id, args.lesson_id, args.artifact_id, agent)
                 return {outcome: 'confirmed' as const, outline: updated as unknown as Record<string, JsonValue>}
             } catch (error: unknown) {
                 return {outcome: 'error' as const, detail: errorText(error)}
@@ -227,7 +230,7 @@ export function installLearningTools(ctx: Context, learning: LearningService): (
                     const answer = await confirmWrite(learning, agent, args.phase === 'completed' ? `结束「${before.title}」？` : `结束本课并进入下一课「${args.current_lesson_id ?? ''}」？`, {from: before.workflow, to: {phase: args.phase, currentLessonId: args.current_lesson_id ?? null}}, exec.signal)
                     if (!answer.confirmed) return {outcome: 'cancelled' as const, ...(answer.custom === undefined ? {} : {detail: answer.custom})}
                 }
-                const outline = await learning.updateOutlineWorkflow(cwd, args.outline_id, args.phase, args.current_lesson_id ?? null)
+                const outline = await learning.updateOutlineWorkflow(cwd, args.outline_id, args.phase, args.current_lesson_id ?? null, agent)
                 return {outcome: requiresConfirmation ? 'confirmed' as const : 'succeeded' as const, outline: outline as unknown as Record<string, JsonValue>}
             } catch (error: unknown) {
                 return {outcome: 'error' as const, detail: errorText(error)}

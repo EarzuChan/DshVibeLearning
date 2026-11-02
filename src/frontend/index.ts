@@ -199,7 +199,11 @@ export function apply(ctx: ClientContext): void {
         // 预览地址带后端签发的预览钥，只能取自已加载的学习数据
         // 目标为空表示新会话：先在同一工作区建会话并打开它（打开即令其上线），再投递意图
         const deliverTo = async (targetSessionId: string, deliver: (target: string) => Promise<InbandPresentResult>): Promise<InbandPresentResult> => {
-            if (targetSessionId !== '') return deliver(targetSessionId)
+            // 投给别的已有会话时，顺带切过去让用户看到模型接手
+            if (targetSessionId !== '') {
+                if (targetSessionId !== String(sessionId)) ctx.uiWorkspace.openSession(targetSessionId as SessionId)
+                return deliver(targetSessionId)
+            }
 
             const cwd = getCwdOrNullBySessionId(sessionId)
             if (cwd === null) throw new Error('DVL：当前会话没有工作区 cwd')
@@ -228,15 +232,15 @@ export function apply(ctx: ClientContext): void {
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
                 await abortRun(ws, category, artifactId, runId)
             },
-            inbandPresentExisting: async (category, artifactId, targetSessionId, runId) => {
+            inbandPresentExisting: async (category, artifactId, targetSessionId, outlineMode, runId) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                return deliverTo(targetSessionId, target => inbandPresentExisting(ws, category, artifactId, target, sessionId, runId))
+                return deliverTo(targetSessionId, target => inbandPresentExisting(ws, category, artifactId, target, sessionId, outlineMode, runId))
             },
-            startDueReview: async (planId, targetSessionId) => {
+            startDueReview: async (planId, targetSessionId, outlineMode) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                return deliverTo(targetSessionId, target => startDueReview(ws, planId, target, sessionId))
+                return deliverTo(targetSessionId, target => startDueReview(ws, planId, target, sessionId, outlineMode))
             },
             deleteOutline: async id => {
                 const ws = await ensureWorkspaceId()
@@ -253,7 +257,8 @@ export function apply(ctx: ClientContext): void {
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
                 await deleteLearningEntity(ws, {target: 'artifact', category, artifactId})
             },
-            openRun: (category, artifactId, runId) => { window.open(runUrl(knownWorkspaceId(), category, artifactId, runId), '_blank', 'noopener') },
+            sessionTitle: id => ctx.sessions.list.getSnapshot().byId[id as SessionId]?.displayTitle ?? null,
+            runUrl: (category, artifactId, runId) => runUrl(knownWorkspaceId(), category, artifactId, runId),
             artifactUrl: urlFor,
         }
     }
