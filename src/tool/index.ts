@@ -155,7 +155,7 @@ export function installLearningTools(ctx: Context, learning: LearningService): (
                 const outline = await learning.readOutline(requireCwd(agent), args.outline_id)
                 if (outline === null) return {outcome: 'not-found' as const}
 
-                learning.markOutlineSeen(agent, requireCwd(agent), outline)
+                learning.markOutlineRead(agent, requireCwd(agent), outline)
                 return {outcome: 'found' as const, outline: outline as unknown as Record<string, JsonValue>}
             } catch (error: unknown) {
                 return {outcome: 'error' as const, detail: errorText(error)}

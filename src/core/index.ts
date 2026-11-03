@@ -43,6 +43,11 @@ declare module '@deepseek-ai/cordis' {
     }
 }
 
+// 会话命名服务（session-title）的最小形状，DVL 不为这一处调用依赖其包
+interface SessionTitleRenamer {
+    rename(session: Agent['session'], title: string): unknown
+}
+
 // DVL 注入会话的消息来源，按 DSH 约定由生产方自行声明
 declare module '@deepseek-ai/dsh-llm' {
     interface MessageSourceMap {
@@ -89,6 +94,7 @@ export class LearningService extends Service {
     private projection: ProjectionHandle<SessionDvlLearningState> | undefined
     private readonly previewSecret = randomBytes(32) // 每个进程一份，用于签发只读预览凭证
     private readonly seenOutlineRevisions = new Map<string, number>() // 会话最近看到的大纲修订号，仅在本进程内有效
+    private readonly readOutlineRevisions = new Map<string, number>() // 会话经 get_outline 或自身写入真正读到的大纲修订号，快照只记基线不算
 
     // 外围能力仍各自实现，LearningService 只统一拥有其安装与卸载生命周期
     private installEssentialCapabilities(ctx: Context): void {
@@ -237,7 +243,8 @@ export class LearningService extends Service {
 
     // 学习面板发起的意图投递：目标会话须在线；新建的会话会继承发起方会话的模型并先进入学习
     // outline 为意图所属的大纲：按 mode 决定是否先为目标会话激活它，再据投递后的会话情况生成指令
-    async deliverPanelIntent(sessionId: string, sourceSessionId: string, summary: string, outline: {readonly id: string; readonly mode: PanelOutlineMode} | null, build: (session: PanelSessionContext) => string | Promise<string>): Promise<void> {
+    // freshTitle 非空表示目标会话由面板刚刚新建：其中没有用户消息，Dsh 不会自动命名，由此处代为命名
+    async deliverPanelIntent(sessionId: string, sourceSessionId: string, summary: string, outline: {readonly id: string; readonly mode: PanelOutlineMode} | null, build: (session: PanelSessionContext) => string | Promise<string>, freshTitle: string | null = null): Promise<void> {
         const agents = this.ctx.get('agents')
         if (sessionId.length === 0) throw new Error('必须指定目标会话')
 
@@ -257,7 +264,13 @@ export class LearningService extends Service {
         const activate = outline !== null && active !== outline.id && (active === null ? outline.mode !== 'keep' : outline.mode === 'switch')
         if (activate) await this.changeCurrentSessionOutline(agent, outline.id)
 
-        const instruction = await build({activeOutlineId: activate ? outline.id : active, activated: activate})
+        const cwd = this.getCurrentSessionCwd(agent)
+        const current = outline === null || cwd === null ? null : await this.outlinesFor(cwd).read(outline.id).catch(() => null)
+        const knowsOutline = current === null || cwd === null || this.readOutlineRevisions.get(this.seenKey(agent, cwd, current.id)) === current.revision
+
+        if (freshTitle !== null) this.nameSession(agent, freshTitle)
+
+        const instruction = await build({activeOutlineId: activate ? outline.id : active, activated: activate, knowsOutline})
 
         if (this.getCurrentSessionDvlLearningState(agent).entered) this.notify(agent, summary, instruction)
         else await this.enterVibeLearning(agent, instruction)
@@ -274,6 +287,18 @@ export class LearningService extends Service {
         }
         recordLearningOutlineChangeToSession(agent.session, outlineId)
         this.ctx.logger.info(`会话 ${String(agent.id)} 的激活纲目切换为 ${outlineId ?? '无'}`)
+    }
+
+    // 命名失败不影响投递，只记日志
+    private nameSession(agent: Agent, title: string): void {
+        const titles = (this.ctx as unknown as {get(name: string): unknown}).get('sessionTitle') as SessionTitleRenamer | undefined
+        if (titles === undefined) return this.ctx.logger.warn(`会话命名服务不可用，未能为会话 ${String(agent.id)} 命名`)
+
+        try {
+            titles.rename(agent.session, title)
+        } catch (error: unknown) {
+            this.ctx.logger.warn(`为会话 ${String(agent.id)} 命名失败：${error instanceof Error ? error.message : String(error)}`)
+        }
     }
 
     notify(agent: Agent, summary: string, text: string): void {
@@ -304,6 +329,12 @@ export class LearningService extends Service {
         this.seenOutlineRevisions.set(this.seenKey(agent, cwd, outline.id), outline.revision)
     }
 
+    // 会话真正读到了大纲全貌：既作为写入校验的基线，也表示面板投递时无需再提示先读
+    markOutlineRead(agent: Agent, cwd: string, outline: Outline): void {
+        this.markOutlineSeen(agent, cwd, outline)
+        this.readOutlineRevisions.set(this.seenKey(agent, cwd, outline.id), outline.revision)
+    }
+
     seenOutlineRevision(agent: Agent, cwd: string, outlineId: string): number | undefined {
         return this.seenOutlineRevisions.get(this.seenKey(agent, cwd, outlineId))
     }
@@ -331,7 +362,7 @@ export class LearningService extends Service {
     }
 
     private afterOutlineWrite(agent: Agent | null, cwd: string, outline: Outline): Outline {
-        if (agent !== null) this.markOutlineSeen(agent, cwd, outline)
+        if (agent !== null) this.markOutlineRead(agent, cwd, outline)
         this.publishLearning(cwd)
         return outline
     }

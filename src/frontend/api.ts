@@ -44,14 +44,14 @@ export function respondToInteraction(interactionId: string, sessionId: string, o
 }
 
 // 发起带内展示请求并返回服务端结束结果
-export function inbandPresentExisting(workspaceId: string, category: ArtifactCategory, artifactId: string, sessionId: string, sourceSessionId: string, outlineMode: PanelOutlineMode, runId?: string): Promise<InbandPresentResult> {
-  const body: InbandPresentRequest = {intent: 'present-existing', workspaceId, category, artifactId, sessionId, sourceSessionId, outlineMode, ...(runId === undefined ? {} : {runId})}
+export function inbandPresentExisting(workspaceId: string, category: ArtifactCategory, artifactId: string, sessionId: string, sourceSessionId: string, outlineMode: PanelOutlineMode, freshSession: boolean, runId?: string): Promise<InbandPresentResult> {
+  const body: InbandPresentRequest = {intent: 'present-existing', workspaceId, category, artifactId, sessionId, sourceSessionId, outlineMode, freshSession, ...(runId === undefined ? {} : {runId})}
   return requestJson<InbandPresentResult>(`${DVL_SERVER_ROUTE_PREFIX}/api/inband-present`, {method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body)})
 }
 
 // 请求模型在指定会话中开始一个已经到期的复习期次
-export function startDueReview(workspaceId: string, planId: string, sessionId: string, sourceSessionId: string, outlineMode: PanelOutlineMode): Promise<InbandPresentResult> {
-  const body: InbandPresentRequest = {intent: 'start-due-review', workspaceId, planId, sessionId, sourceSessionId, outlineMode}
+export function startDueReview(workspaceId: string, planId: string, sessionId: string, sourceSessionId: string, outlineMode: PanelOutlineMode, freshSession: boolean): Promise<InbandPresentResult> {
+  const body: InbandPresentRequest = {intent: 'start-due-review', workspaceId, planId, sessionId, sourceSessionId, outlineMode, freshSession}
   return requestJson<InbandPresentResult>(`${DVL_SERVER_ROUTE_PREFIX}/api/inband-present`, {method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body)})
 }
 

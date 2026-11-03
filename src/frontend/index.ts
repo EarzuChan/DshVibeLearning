@@ -38,6 +38,15 @@ function probeMainSelection(uiWorkspace: unknown): MainSelectionStore | null {
     return typeof selection?.getSnapshot === 'function' && typeof selection.subscribe === 'function' ? selection as MainSelectionStore : null
 }
 
+// 目录比较：统一分隔符与末尾斜杠，Windows 盘符路径不区分大小写
+function samePath(a: string, b: string): boolean {
+    const normalize = (path: string): string => {
+        const unified = path.replace(/\\/g, '/').replace(/\/+$/, '')
+        return /^[a-zA-Z]:/.test(unified) ? unified.toLowerCase() : unified
+    }
+    return normalize(a) === normalize(b)
+}
+
 // 注册学习视图与两张常驻面板，并维护对应的数据生命周期。前端的 Cordis
 export function apply(ctx: ClientContext): void {
     ctx.effect(() => ctx.locale.register(NS, {zh, en}), CORDIS_EFFECT_DICTIONARIES)
@@ -68,6 +77,16 @@ export function apply(ctx: ClientContext): void {
         const workspaces = ctx.workspaces.list.getSnapshot()
         const workspace = workspaces.items.find(item => item.sessionIds.includes(sessionId))
         return workspace?.path ?? null
+    }
+
+    // 解析会话所属的 Dsh 工作区：先看哪个工作区收录了它，再按目录匹配
+    const getDshWorkspaceIdOrNull = (sessionId: SessionId) => {
+        const items = ctx.workspaces.list.getSnapshot().items
+        const member = items.find(item => item.sessionIds.includes(sessionId))
+        if (member !== undefined) return member.workspaceId
+
+        const cwd = getCwdOrNullBySessionId(sessionId)
+        return cwd === null ? null : items.find(item => samePath(item.path, cwd))?.workspaceId ?? null
     }
 
     // 刷新全局笔记并合并并发请求，失败时将错误写入笔记域
@@ -196,22 +215,22 @@ export function apply(ctx: ClientContext): void {
             return cwd !== null && workspace.cwd === cwd ? workspace.workspaceId ?? '' : ''
         }
 
-        // 预览地址带后端签发的预览钥，只能取自已加载的学习数据
-        // 目标为空表示新会话：先在同一工作区建会话并打开它（打开即令其上线），再投递意图
-        const deliverTo = async (targetSessionId: string, deliver: (target: string) => Promise<InbandPresentResult>): Promise<InbandPresentResult> => {
+        // 目标为空表示新会话：先在同一 Dsh 工作区建会话并打开它（打开即令其上线），再投递意图
+        const deliverTo = async (targetSessionId: string, deliver: (target: string, freshSession: boolean) => Promise<InbandPresentResult>): Promise<InbandPresentResult> => {
             // 投给别的已有会话时，顺带切过去让用户看到模型接手
             if (targetSessionId !== '') {
                 if (targetSessionId !== String(sessionId)) ctx.uiWorkspace.openSession(targetSessionId as SessionId)
-                return deliver(targetSessionId)
+                return deliver(targetSessionId, false)
             }
 
-            const cwd = getCwdOrNullBySessionId(sessionId)
-            if (cwd === null) throw new Error('DVL：当前会话没有工作区 cwd')
+            // 必须按 workspaceId 新建：只按 cwd 新建的会话不会挂进工作区，侧栏会把它归入“未分组”
+            const workspaceId = getDshWorkspaceIdOrNull(sessionId)
+            if (workspaceId === null) throw new Error('DVL：找不到当前会话所属的 Dsh 工作区，无法在其中新建会话')
 
-            const created = await ctx.sessions.create({cwd})
+            const created = await ctx.sessions.create({workspaceId})
             console.info(`[DVL] 已为带内学习新建会话 ${String(created)}`)
             ctx.uiWorkspace.openSession(created)
-            return deliver(String(created))
+            return deliver(String(created), true)
         }
 
         const urlFor = (category: ArtifactCategory, artifactId: string): string => {
@@ -235,12 +254,12 @@ export function apply(ctx: ClientContext): void {
             inbandPresentExisting: async (category, artifactId, targetSessionId, outlineMode, runId) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                return deliverTo(targetSessionId, target => inbandPresentExisting(ws, category, artifactId, target, sessionId, outlineMode, runId))
+                return deliverTo(targetSessionId, (target, fresh) => inbandPresentExisting(ws, category, artifactId, target, sessionId, outlineMode, fresh, runId))
             },
             startDueReview: async (planId, targetSessionId, outlineMode) => {
                 const ws = await ensureWorkspaceId()
                 if (ws === null) throw new Error('DVL：当前会话没有工作区 cwd')
-                return deliverTo(targetSessionId, target => startDueReview(ws, planId, target, sessionId, outlineMode))
+                return deliverTo(targetSessionId, (target, fresh) => startDueReview(ws, planId, target, sessionId, outlineMode, fresh))
             },
             deleteOutline: async id => {
                 const ws = await ensureWorkspaceId()

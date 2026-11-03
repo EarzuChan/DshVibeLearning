@@ -9,7 +9,7 @@ import {Context} from '@deepseek-ai/cordis'
 import LearningService from '../lib/core/index.js'
 import {dvlLearningProjection} from '../lib/core/projection.js'
 import {renderSnapshot} from '../lib/core/prompt.js'
-import {renderPresentInstruction, resolveArtifactOwner} from '../lib/core/panel-intent.js'
+import {presentSessionTitle, renderPresentInstruction, resolveArtifactOwner} from '../lib/core/panel-intent.js'
 import {installLearningRoutes} from '../lib/the-so-called-backend/index.js'
 import {recordWorkspaceHashIdByGeneratingItFromItsCwd} from '../lib/the-so-called-backend/workspace-hash-id-related.js'
 import {installLearningTools} from '../lib/tool/index.js'
@@ -137,11 +137,26 @@ await check('会话内呈现：按归属与会话大纲给出正常流程或回�
     assert.equal(owner.lessonId, lesson2)
 
     const base = {kind: 'lesson', title: '第二课', path: lessonArtifact.path, owner, runs: []}
-    const current = renderPresentInstruction({...base, session: {activeOutlineId: draft.id, activated: true}})
+    const current = renderPresentInstruction({...base, session: {activeOutlineId: draft.id, activated: true, knowsOutline: false}})
     assert.ok(current.includes('第 2 课「第二课」') && current.includes('正常课程流程') && current.includes('已为本次呈现'))
+    assert.ok(current.includes(`请先调用 get_outline(outline_id='${draft.id}')`) && current.includes('当前正是这一课'))
+    assert.equal(current.split('第 2 课「第二课」').length, 2)
 
-    const elsewhere = renderPresentInstruction({...base, session: {activeOutlineId: 'other-outline', activated: false}})
+    const known = renderPresentInstruction({...base, session: {activeOutlineId: draft.id, activated: false, knowsOutline: true}})
+    assert.ok(!known.includes('get_outline') && known.includes('请调用 present_artifact'))
+
+    const elsewhere = renderPresentInstruction({...base, session: {activeOutlineId: 'other-outline', activated: false, knowsOutline: true}})
     assert.ok(elsewhere.includes('只是回看') && !elsewhere.includes('正常课程流程'))
+
+    assert.equal(presentSessionTitle('lesson', '第二课', owner), '学习 · 第 2 课「第二课」')
+})
+
+await check('会话内呈现：当前课程已过呈现阶段时按回看处理，且不称其为历史工件', async () => {
+    await learning.updateOutlineWorkflow(ws, draft.id, 'qa', lesson2, null)
+
+    const owner = resolveArtifactOwner('lesson', (await learning.readOutline(ws, draft.id)).artifactBindings[lesson2], await learning.listOutlines(ws), [], {rounds: []})
+    const text = renderPresentInstruction({kind: 'lesson', title: '第二课', path: 'x', owner, runs: [], session: {activeOutlineId: draft.id, activated: false, knowsOutline: true}})
+    assert.ok(text.includes('已过呈现阶段（qa）') && !text.includes('历史或非当前') && !text.includes('正常课程流程'))
 })
 
 // ---HTTP 路由：用替身 webServer 挂在真实 http 服务上---

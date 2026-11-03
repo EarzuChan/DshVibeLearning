@@ -12,7 +12,7 @@ import {findOutlineLesson, outlineArtifactIds} from '../core/outline.ts'
 import {artifactKindOf} from '../shared/artifacts.ts'
 import type {AbortRunRequest, DeleteLearningEntityRequest, DirectRunRequest, InbandPresentRequest, LearningDataDto} from '../shared/api.ts'
 import {CORDIS_EFFECT_BACKEND_ROUTES, DVL_SERVER_ROUTE_PREFIX} from '../shared/constants.ts'
-import {ownerOutlineIdOf, renderDueReviewInstruction, renderPresentInstruction, resolveArtifactOwner, type PanelSessionContext} from '../core/panel-intent.ts'
+import {dueReviewSessionTitle, ownerOutlineIdOf, presentSessionTitle, renderDueReviewInstruction, renderPresentInstruction, resolveArtifactOwner, type PanelSessionContext} from '../core/panel-intent.ts'
 import type {NoteAccess} from '../shared/model.ts'
 import {getWorkspaceCwdOrNullByItsHashId, recordWorkspaceHashIdByGeneratingItFromItsCwd} from './workspace-hash-id-related.ts'
 
@@ -100,12 +100,12 @@ export function installLearningRoutes(ctx: Context, learning: LearningService): 
     // 这个**的确需要**CWD先有所被记住。但我觉得这是合理的，因为一般用户，在 UI 上也是先看到这个工作区（这就隐含已记住其了），再去想办法用它的端点服务。故目前尚算合理
     const resolveCwd = (workspaceId: string): string | null => getWorkspaceCwdOrNullByItsHashId(ctx, workspaceId)
 
-    // 学习面板的意图投递：目标会话（含前端刚新建的）由核心负责等待上线、继承模型与进入学习
-    const deliverIntent = async (body: {readonly sessionId?: unknown; readonly sourceSessionId?: unknown; readonly outlineMode?: unknown}, summary: string, outlineId: string | null, build: (session: PanelSessionContext) => string): Promise<{ok: true; sessionId: string}> => {
+    // 学习面板的意图投递：目标会话（含前端刚新建的）由核心负责等待上线、继承模型、命名与进入学习
+    const deliverIntent = async (body: {readonly sessionId?: unknown; readonly sourceSessionId?: unknown; readonly outlineMode?: unknown; readonly freshSession?: unknown}, summary: string, outlineId: string | null, sessionTitle: string, build: (session: PanelSessionContext) => string): Promise<{ok: true; sessionId: string}> => {
         const sessionId = asString(body.sessionId)
         const mode = body.outlineMode === 'switch' || body.outlineMode === 'keep' ? body.outlineMode : 'auto'
 
-        await learning.deliverPanelIntent(sessionId, asString(body.sourceSessionId), summary, outlineId === null ? null : {id: outlineId, mode}, build)
+        await learning.deliverPanelIntent(sessionId, asString(body.sourceSessionId), summary, outlineId === null ? null : {id: outlineId, mode}, build, body.freshSession === true ? sessionTitle : null)
         return {ok: true, sessionId}
     }
 
@@ -294,7 +294,7 @@ export function installLearningRoutes(ctx: Context, learning: LearningService): 
                 if (plan === null) return sendJson(res, 404, {ok: false, error: '复习计划不存在'})
 
                 const outline = await learning.readOutline(cwd, plan.outlineId)
-                return sendJson(res, 200, await deliverIntent(body, '开始到期复习', plan.outlineId, session => renderDueReviewInstruction(plan, outline, session)))
+                return sendJson(res, 200, await deliverIntent(body, '开始到期复习', plan.outlineId, dueReviewSessionTitle(plan, outline), session => renderDueReviewInstruction(plan, outline, session)))
             }
 
             if (body.intent !== 'present-existing') return sendJson(res, 400, {ok: false, error: '会话内呈现的意图无效'})
@@ -308,7 +308,7 @@ export function installLearningRoutes(ctx: Context, learning: LearningService): 
             const runs = await learning.runs.list(kind, artifactId, cwd)
             const artifactPath = learning.filesFor(cwd).artifactHtml(kind, artifactId)
 
-            return sendJson(res, 200, await deliverIntent(body, `呈现工件「${title}」`, ownerOutlineIdOf(owner), session => renderPresentInstruction({kind, title, path: artifactPath, ...(runId === undefined ? {} : {runId}), owner, runs, session})))
+            return sendJson(res, 200, await deliverIntent(body, `呈现工件「${title}」`, ownerOutlineIdOf(owner), presentSessionTitle(kind, title, owner), session => renderPresentInstruction({kind, title, path: artifactPath, ...(runId === undefined ? {} : {runId}), owner, runs, session})))
         }
 
         // Run 页面服务创建时冻结的副本，后续对工件的编辑不影响进行中的 Run

@@ -18,6 +18,7 @@ export type ArtifactOwner =
 export interface PanelSessionContext {
     readonly activeOutlineId: string | null
     readonly activated: boolean // 是否为本次投递切换或设置了激活大纲
+    readonly knowsOutline: boolean // 本会话是否已读过所属大纲的最新修订；无所属大纲时为 true
 }
 
 export function resolveArtifactOwner(kind: ArtifactKind, artifactId: string, outlines: readonly Outline[], plans: readonly ReviewPlan[], temporary: TemporaryReviewPlanRoundManifest): ArtifactOwner {
@@ -43,36 +44,43 @@ export function ownerOutlineIdOf(owner: ArtifactOwner): string | null {
     return null
 }
 
-// “第 n 课「标题」”
-function lessonLabel(outline: Outline | null, lessonId: string): string {
+// “第 n 课「标题」”，名称用于会话标题等不带 ID 的场合
+function lessonName(outline: Outline | null, lessonId: string): string {
     if (outline === null) return `课程 ${lessonId}`
 
-    const lessons = outlineLessons(outline)
-    const index = lessons.findIndex(lesson => lesson.id === lessonId)
+    const index = outlineLessons(outline).findIndex(lesson => lesson.id === lessonId)
     const title = findOutlineLesson(outline, lessonId)?.title ?? lessonId
-    return index < 0 ? `「${title}」（lesson_id: ${lessonId}）` : `第 ${index + 1} 课「${title}」（lesson_id: ${lessonId}）`
+    return index < 0 ? `「${title}」` : `第 ${index + 1} 课「${title}」`
 }
 
-function workflowLabel(outline: Outline): string {
+function lessonLabel(outline: Outline | null, lessonId: string): string {
+    return outline === null ? lessonName(outline, lessonId) : `${lessonName(outline, lessonId)}（lesson_id: ${lessonId}）`
+}
+
+// 大纲进度；当前课程正是所述课程时不再重复其名
+function progressLabel(outline: Outline, focusLessonId: string): string {
     const workflow = outline.workflow
-    if (workflow.currentLessonId === null) return workflow.phase
-    return `${workflow.phase}，当前在${lessonLabel(outline, workflow.currentLessonId)}`
+    if (workflow.currentLessonId === null) return `大纲进度：${workflow.phase}，当前没有进行中的课程。`
+    if (workflow.currentLessonId === focusLessonId) return `大纲进度：${workflow.phase}，当前正是这一课。`
+    return `大纲进度：${workflow.phase}，当前在${lessonLabel(outline, workflow.currentLessonId)}。`
 }
 
-function outlineLabel(outline: Outline | null, outlineId: string): string {
-    return outline === null ? `大纲 ${outlineId}（已不存在）` : `大纲「${outline.title}」（outline_id: ${outline.id}；进度：${workflowLabel(outline)}）`
+// “大纲「X」（outline_id）的第 n 课「Y」（lesson_id）。大纲进度：……”
+function lessonInOutline(outline: Outline | null, outlineId: string, lessonId: string): string {
+    if (outline === null) return `大纲 ${outlineId}（已不存在）的${lessonLabel(outline, lessonId)}。`
+    return `大纲「${outline.title}」（outline_id: ${outline.id}）的${lessonLabel(outline, lessonId)}。${progressLabel(outline, lessonId)}`
 }
 
 export function describeOwner(owner: ArtifactOwner): string {
     switch (owner.role) {
         case 'lesson':
-            return `归属：${outlineLabel(owner.outline, owner.outline.id)}的${lessonLabel(owner.outline, owner.lessonId)}。`
+            return `归属：${lessonInOutline(owner.outline, owner.outline.id, owner.lessonId)}`
 
         case 'review-round':
-            return `归属：复习计划 ${owner.plan.id} 的期次 ${owner.round.id}（${owner.round.state === 'active' ? '进行中' : '已完成'}），复习对象是${outlineLabel(owner.outline, owner.plan.outlineId)}的${lessonLabel(owner.outline, owner.plan.lessonId)}。`
+            return `归属：复习计划 ${owner.plan.id} 的期次 ${owner.round.id}（${owner.round.state === 'active' ? '进行中' : '已完成'}），复习对象是${lessonInOutline(owner.outline, owner.plan.outlineId, owner.plan.lessonId)}`
 
         case 'temporary-review':
-            return `归属：临时复习期次 ${owner.round.id}，复习对象是${outlineLabel(owner.outline, owner.round.outlineId)}的${lessonLabel(owner.outline, owner.round.lessonId)}。`
+            return `归属：临时复习期次 ${owner.round.id}，复习对象是${lessonInOutline(owner.outline, owner.round.outlineId, owner.round.lessonId)}`
 
         case 'quiz':
             return '归属：小测，不属于任何大纲或复习计划。'
@@ -102,14 +110,21 @@ function describeRuns(runs: readonly ArtifactRunSummary[]): string {
 function describeFlow(owner: ArtifactOwner, session: PanelSessionContext): string {
     const ownerOutlineId = ownerOutlineIdOf(owner)
     const inContext = ownerOutlineId === null || session.activeOutlineId === ownerOutlineId
-    const lookBack = '这是历史或非当前的工件，本次只是回看：收到 completed 后按需批改并 save_feedback，不得改变大纲 Workflow 或复习计划。'
+    const lookBackRule = '收到 completed 后按需批改并 save_feedback，不得改变大纲 Workflow 或复习计划。'
+    const currentLesson = owner.role === 'lesson' && owner.outline.workflow.currentLessonId === owner.lessonId
 
-    if (owner.role === 'lesson' && inContext && owner.outline.workflow.phase === 'learning' && owner.outline.workflow.currentLessonId === owner.lessonId) return '这是该大纲当前正在学习的课程，走正常课程流程：收到 completed 后批改并 save_feedback，再调用 update_outline_workflow 进入 qa 开始答疑。'
+    if (currentLesson && inContext && owner.outline.workflow.phase !== 'learning') return `这正是该大纲的当前课程，但已过呈现阶段（${owner.outline.workflow.phase}），本次是回看：${lookBackRule}`
+    if (currentLesson && inContext) return '这是该大纲当前正在学习的课程，走正常课程流程：收到 completed 后批改并 save_feedback，再调用 update_outline_workflow 进入 qa 开始答疑。'
     if (owner.role === 'review-round' && owner.round.state === 'active') return `这是复习计划 ${owner.plan.id} 当前进行中的期次：收到 completed 后批改并 save_feedback，再调用 update_review_plan(plan_id='${owner.plan.id}', rating) 结算本期。`
     if (owner.role === 'temporary-review') return '这是临时复习：收到 completed 后批改并 save_feedback；是否纳入正式复习计划按临时复习规则询问用户。'
     if (owner.role === 'quiz') return '小测没有状态机：收到 completed 后批改并 save_feedback 即可，不改变大纲或复习计划。'
 
-    return lookBack
+    return `这是历史或非当前的工件，本次只是回看：${lookBackRule}`
+}
+
+// 读大纲的提示：会话尚未读过所属大纲的最新修订时，请模型先读再动手，而不强制
+function readOutlineFirst(outlineId: string | null, session: PanelSessionContext): string {
+    return outlineId === null || session.knowsOutline ? '' : `请先调用 get_outline(outline_id='${outlineId}') 掌握大纲全貌与进度，再`
 }
 
 export interface PresentInstructionInput {
@@ -132,14 +147,29 @@ export function renderPresentInstruction(input: PresentInstructionInput): string
         describeOwner(input.owner),
         describeSession(ownerOutlineId, ownerOutline?.title ?? null, input.session),
         describeRuns(input.runs),
-        `请调用 ${call}。${describeFlow(input.owner, input.session)}`,
+        `${readOutlineFirst(ownerOutlineId, input.session) || '请'}调用 ${call}。${describeFlow(input.owner, input.session)}`,
     ].join('\n')
 }
 
 export function renderDueReviewInstruction(plan: ReviewPlan, outline: Outline | null, session: PanelSessionContext): string {
     return [
-        `用户从学习面板确认开始复习计划 ${plan.id} 的到期复习，复习对象是${outlineLabel(outline, plan.outlineId)}的${lessonLabel(outline, plan.lessonId)}。`,
+        `用户从学习面板确认开始复习计划 ${plan.id} 的到期复习，复习对象是${lessonInOutline(outline, plan.outlineId, plan.lessonId)}`,
         describeSession(plan.outlineId, outline?.title ?? null, session).replace('因此本次只是回看', '复习计划本身不依赖会话的激活大纲，照常进行'),
-        `请调用 claim_review_plan_round 取得 active round，再生成全新的 Review Artifact，调用 update_review_plan_round_artifact_binding 绑定本期，再 present、批改、save_feedback，最后调用 update_review_plan 结算计划。`,
+        `${outline === null ? '请' : readOutlineFirst(plan.outlineId, session) || '请'}调用 claim_review_plan_round 取得 active round，再生成全新的 Review Artifact，调用 update_review_plan_round_artifact_binding 绑定本期，再 present、批改、save_feedback，最后调用 update_review_plan 结算计划。`,
     ].join('\n')
+}
+
+// 面板新建会话的标题：说明这个会话是来做什么的
+export function presentSessionTitle(kind: ArtifactKind, title: string, owner: ArtifactOwner): string {
+    switch (owner.role) {
+        case 'lesson': return `学习 · ${lessonName(owner.outline, owner.lessonId)}`
+        case 'review-round': return `复习 · ${lessonName(owner.outline, owner.plan.lessonId)}`
+        case 'temporary-review': return `复习 · ${lessonName(owner.outline, owner.round.lessonId)}`
+        case 'quiz': return `小测 · ${title}`
+        case 'unowned': return `回看 · ${kind === 'lesson' ? '课程' : '复习'}「${title}」`
+    }
+}
+
+export function dueReviewSessionTitle(plan: ReviewPlan, outline: Outline | null): string {
+    return `复习 · ${lessonName(outline, plan.lessonId)}`
 }
