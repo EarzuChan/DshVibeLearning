@@ -1,7 +1,7 @@
 // 复习计划、正式期次与临时托管期次的持久化边界
 
 import {randomUUID} from 'node:crypto'
-import type {Card} from 'ts-fsrs'
+import type {Card, FSRS} from 'ts-fsrs'
 import type {ArtifactId} from '../shared/artifacts.ts'
 import type {ReviewPlan, ReviewPlanRound, ReviewRating, TemporaryReviewPlanRound, TemporaryReviewPlanRoundManifest} from '../shared/model.ts'
 import {cardFromStored, cardToStored, newCard, nextCard} from '../util/fsrs.ts'
@@ -73,7 +73,7 @@ function confirmManifest(manifest: TemporaryReviewPlanRoundManifest): void {
 }
 
 export class ReviewPlanStore {
-    constructor(readonly files: LearningFiles) {}
+    constructor(readonly files: LearningFiles, private readonly scheduler: FSRS) {}
 
     async read(id: string): Promise<ReviewPlan | null> {
         const plan = await readJson<ReviewPlan>(this.files.reviewPlanFile(id))
@@ -99,7 +99,7 @@ export class ReviewPlanStore {
     async create(input: ReviewPlanCreationInput): Promise<PreparedReviewPlan> {
         if (!isSafeSegment(input.outlineId) || !isSafeSegment(input.lessonId)) throw new Error('复习计划的纲目或课程 ID 无效')
         if (await this.find(input.outlineId, input.lessonId) !== null) throw new Error('该课程已经存在复习计划')
-        const card = nextCard(newCard(), input.rating, Date.now())
+        const card = nextCard(this.scheduler, newCard(), input.rating, Date.now())
         const plan: ReviewPlan = {id: randomUUID(), outlineId: input.outlineId, lessonId: input.lessonId, card: cardToStored(card), rounds: []}
         confirmPlan(plan)
         return {plan, dueAt: dueAtOf(card)}
@@ -142,7 +142,7 @@ export class ReviewPlanStore {
         if (plan === null) throw new Error(`复习计划不存在：${planId}`)
         const active = plan.rounds.filter(round => round.state === 'active')
         if (active.length !== 1) throw new Error(`复习计划必须有且只有一个活跃期次：${planId}`)
-        const card = nextCard(cardFromStored(plan.card), rating, Date.now())
+        const card = nextCard(this.scheduler, cardFromStored(plan.card), rating, Date.now())
         const completedAt = nowIso()
         const activeId = (active[0] as ReviewPlanRound).id
         const updated: ReviewPlan = {...plan, card: cardToStored(card), rounds: plan.rounds.map(round => round.id === activeId ? {...round, state: 'completed' as const, completedAt} : round)}

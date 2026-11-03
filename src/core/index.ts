@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import {SessionId as brandSessionId} from '@deepseek-ai/dsh-session'
 import z from '@deepseek-ai/schemastery'
 import type {Agent} from '@deepseek-ai/dsh-agent'
+import type {FSRS} from 'ts-fsrs'
 import {boundContextSummary, createUserMessage, type ContextFormed} from '@deepseek-ai/dsh-llm'
 import {installLearnCommand} from '../command/index.ts'
 import type {ArtifactId, ArtifactKind} from '../shared/artifacts.ts'
@@ -34,6 +35,7 @@ import type {PanelOutlineMode, PanelSessionContext} from './panel-intent.ts'
 import {AUTHOR_GUIDE, BOOT_LINE, FULL_GUIDE, renderSnapshot} from './prompt.ts'
 import {ReviewPlanStore, type PreparedReviewPlan, type ReviewPlanCreationInput} from './review-plan.ts'
 import {RunStore} from './run.ts'
+import {createScheduler, DEFAULT_LEARNING_STEPS, DEFAULT_RELEARNING_STEPS} from '../util/fsrs.ts'
 import type {ArtifactRef, ArtifactRunDescriptor, LearningSnapshot, PresentOutcome, RunRef, StaleOutlineNotice} from './types.ts'
 import {presentOutcomeOf} from './types.ts'
 
@@ -60,6 +62,8 @@ export interface Config {
     readonly dataDir?: string
     readonly presentTimeoutMs?: number
     readonly delegationToolNames?: string[]
+    readonly reviewLearningSteps?: string[] // 新复习计划的短期学习步，如 ['30m', '1h']
+    readonly reviewRelearningSteps?: string[] // 复习评 again 后的重学步，如 ['30m']
 }
 
 // 会话在 DVL 中的角色：根学习会话、学习会话派出的创作子代理、与学习无关
@@ -83,9 +87,10 @@ function errorText(error: unknown): string {
 
 // TIPS：核心服务
 export class LearningService extends Service {
-    static Config: z<Config> = z.object({dataDir: z.string().default(join(homedir(), '.dsh-vibe-learning')), presentTimeoutMs: z.number().default(3_600_000), delegationToolNames: z.array(z.string()).default(DEFAULT_DELEGATION_TOOL_NAMES)})
+    static Config: z<Config> = z.object({dataDir: z.string().default(join(homedir(), '.dsh-vibe-learning')), presentTimeoutMs: z.number().default(3_600_000), delegationToolNames: z.array(z.string()).default(DEFAULT_DELEGATION_TOOL_NAMES), reviewLearningSteps: z.array(z.string()).default(DEFAULT_LEARNING_STEPS), reviewRelearningSteps: z.array(z.string()).default(DEFAULT_RELEARNING_STEPS)})
 
     readonly notes: NotesStore
+    private readonly scheduler: FSRS
     readonly dataChanges = new DataChangeBus()
     readonly runs = new RunStore()
     readonly inBandPresentations = new InBandPresentationRegistry()
@@ -123,6 +128,7 @@ export class LearningService extends Service {
         super(ctx, 'learning')
 
         this.notes = new NotesStore(config.dataDir ?? join(homedir(), '.dsh-vibe-learning'), () => this.dataChanges.publish('notes'))
+        this.scheduler = createScheduler(config.reviewLearningSteps ?? DEFAULT_LEARNING_STEPS, config.reviewRelearningSteps ?? DEFAULT_RELEARNING_STEPS)
 
         this.installEssentialCapabilities(ctx)
 
@@ -190,7 +196,7 @@ export class LearningService extends Service {
     }
 
     reviewPlansFor(cwd: string): ReviewPlanStore {
-        return new ReviewPlanStore(this.filesFor(cwd))
+        return new ReviewPlanStore(this.filesFor(cwd), this.scheduler)
     }
 
     artifactsFor(cwd: string): ArtifactStore {

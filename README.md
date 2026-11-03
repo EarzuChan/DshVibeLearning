@@ -47,6 +47,6 @@ dsh web # 持久生效，直接使用
 
 本项目属于[LinuxDo社区](https://linux.do/)共建项目，该社区还有很多更带派的项目和小伙伴，欢迎前往。
 
-联系我：kontakt@earzuchan.com。
+联系我：contact@earzuchan.me。
 
 DeepSeek Harness 是 DeepSeek 公司的商标。本项目是第三方的 DeepSeek Harness 插件，从未宣称也无意争取什么官方地位，请注意分辨。

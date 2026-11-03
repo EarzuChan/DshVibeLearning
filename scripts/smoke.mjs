@@ -151,6 +151,15 @@ await check('会话内呈现：按归属与会话大纲给出正常流程或回�
     assert.equal(presentSessionTitle('lesson', '第二课', owner), '学习 · 第 2 课「第二课」')
 })
 
+await check('复习计划：刚立下时按半小时到一小时的学习步到期，而非几分钟后', async () => {
+    const minutesUntil = prepared => (Date.parse(prepared.dueAt) - Date.now()) / 60000
+    const good = minutesUntil(await learning.createReviewPlan(ws, {outlineId: draft.id, lessonId: lesson1, rating: 'good'}))
+    const again = minutesUntil(await learning.createReviewPlan(ws, {outlineId: draft.id, lessonId: lesson1, rating: 'again'}))
+
+    assert.ok(good > 55 && good <= 61, `good 应约 1 小时后到期，实际 ${good.toFixed(1)} 分钟`)
+    assert.ok(again > 25 && again <= 31, `again 应约 30 分钟后到期，实际 ${again.toFixed(1)} 分钟`)
+})
+
 await check('会话内呈现：当前课程已过呈现阶段时按回看处理，且不称其为历史工件', async () => {
     await learning.updateOutlineWorkflow(ws, draft.id, 'qa', lesson2, null)
 
